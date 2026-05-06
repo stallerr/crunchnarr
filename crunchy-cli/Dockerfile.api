@@ -1,0 +1,51 @@
+# ---- Bento4 stage (mp4decrypt) ----
+FROM debian:bookworm-slim AS bento4-builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git cmake g++ make python3 ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN git clone --depth 1 https://github.com/axiomatic-systems/Bento4.git /bento4
+
+WORKDIR /bento4
+RUN mkdir build && cd build \
+    && cmake -DCMAKE_BUILD_TYPE=Release .. \
+    && make -j$(nproc) mp4decrypt
+
+# ---- Build stage ----
+FROM rust:1.88-bookworm AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    pkg-config \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
+COPY src ./src
+
+RUN cargo build --release -p crunchy-api
+
+# ---- Runtime stage ----
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user
+RUN useradd -m -s /bin/bash crunchy \
+    && mkdir -p /home/crunchy/.config/crunchy-cli /downloads /widevine /data \
+    && chown -R crunchy:crunchy /home/crunchy /downloads /widevine /data
+
+COPY --from=bento4-builder /bento4/build/mp4decrypt /usr/local/bin/mp4decrypt
+COPY --from=builder /build/target/release/crunchy-api /usr/local/bin/crunchy-api
+
+USER crunchy
+WORKDIR /app
+
+EXPOSE 8080
+
+CMD ["crunchy-api"]

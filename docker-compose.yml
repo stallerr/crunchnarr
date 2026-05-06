@@ -1,0 +1,26 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: stallerr/crunchnarr
+    network_mode: host
+    environment:
+      - PORT=8080
+      - HOST=0.0.0.0
+      - DATABASE_URL=sqlite:/data/crunchy-api.db?mode=rwc
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET is required}
+      - STORAGE_SECRET_KEY=${STORAGE_SECRET_KEY:?STORAGE_SECRET_KEY is required (32 bytes hex or base64)}
+      - ACCESS_TOKEN_TTL=${ACCESS_TOKEN_TTL:-3600}
+      - REFRESH_TOKEN_TTL=${REFRESH_TOKEN_TTL:-2592000}
+      - TRACKING_INTERVAL_SECS=${TRACKING_INTERVAL_SECS:-3600}
+      - DOWNLOADS_DIR=/downloads
+      - API_URL=http://localhost:8080
+    volumes:
+      - api-data:/data
+      - ${DOWNLOADS_DIR:-./downloads}:/downloads
+      - ${WIDEVINE_DIR:?WIDEVINE_DIR is required}:/widevine:ro
+    restart: unless-stopped
+
+volumes:
+  api-data:

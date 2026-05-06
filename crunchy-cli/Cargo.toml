@@ -1,0 +1,79 @@
+[workspace]
+members = [".", "crates/widevine", "crates/widevine-proto", "crates/api"]
+
+[package]
+name = "crunchy-cli"
+version = "0.1.0"
+edition = "2021"
+authors = ["Rico"]
+description = "CLI tool for downloading content from Crunchyroll"
+license = "MIT"
+repository = "https://github.com/anomalyco/crunchy-cli"
+keywords = ["crunchyroll", "downloader", "cli", "anime"]
+categories = ["command-line-utilities"]
+
+[dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# HTTP client
+reqwest = { version = "0.12", features = ["json", "cookies", "socks", "rustls-tls", "gzip", "brotli", "deflate", "stream"] }
+
+# CLI
+clap = { version = "4", features = ["derive", "env"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+# Progress bars
+indicatif = "0.17"
+console = "0.15"
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Utilities
+sha2 = "0.10"
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+directories = "6"
+dirs = "5"
+url = "2"
+urlencoding = "2"
+regex = "1"
+base64 = "0.22"
+shellexpand = "3"
+tempfile = "3"
+which = "6"
+
+# XML parsing (for MPD)
+quick-xml = { version = "0.36", features = ["serialize"] }
+
+# Subtitle conversion
+rsubs-lib = "0.2"
+
+# Async utilities
+futures = "0.3"
+tokio-util = "0.7"
+async-trait = "0.1"
+
+# Widevine CDM (vendored)
+widevine = { path = "crates/widevine" }
+hex = "0.4"
+rsa = { version = "0.9", features = ["pkcs5"] }
+
+# FFmpeg management
+ffmpeg-sidecar = "2"
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

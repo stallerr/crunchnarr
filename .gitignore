@@ -1,0 +1,39 @@
+# Environment
+.env
+
+# Rust
+target/
+
+# Node
+node_modules/
+
+# Next.js
+.next/
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+
+# Data
+/downloads/
+/widevine/
+crunchy-cli/widevine/
+*.db
+*.db-shm
+*.db-wal
+
+# Debug / temp
+debug.txt
+manifest.xml
+
+# Binaries (downloaded at runtime)
+crunchy-cli/lib/
+
+# User-specific config
+crunchy-cli/config.toml
+
+# Plan files
+plan/
