@@ -24,7 +24,18 @@ Most Crunchyroll downloaders are single-user GUI desktop apps focused on ad-hoc 
 
 ## Screenshots
 
-> _TODO: add a watchlist screenshot, an episode-list-with-badges screenshot, and a settings screenshot._
+| | |
+|---|---|
+| ![Sign in](docs/screenshots/01-login.png) | ![Sign up](docs/screenshots/02-sign-up.png) |
+| Sign in | Sign up |
+| ![Dashboard](docs/screenshots/03-dashboard-empty.png) | ![Watchlist](docs/screenshots/04-watchlist-empty.png) |
+| Dashboard | Watchlist |
+| ![Bookmarks](docs/screenshots/05-bookmarks-empty.png) | ![Downloads](docs/screenshots/06-downloads-empty.png) |
+| Bookmarks | Downloads queue |
+| ![Link Crunchyroll](docs/screenshots/07-link-crunchyroll.png) | ![Settings — Site](docs/screenshots/09-settings-site.png) |
+| Linking a Crunchyroll account | Site settings (theme + watchlist polling) |
+| ![Settings — Downloads](docs/screenshots/08-settings-downloads.png) | ![Settings — API keys](docs/screenshots/10-settings-api-keys.png) |
+| Download preferences | *Arr-style API keys |
 
 ## Quick start (Docker)
 
