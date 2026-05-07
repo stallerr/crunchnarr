@@ -7,6 +7,7 @@ use utoipa::{Modify, OpenApi};
 use crate::error::ErrorBody;
 use crate::routes::{
     api_keys::{ApiKeyItem, CreateApiKeyRequest, CreateApiKeyResponse},
+    app_settings::{AppSettings, UpdateAppSettingsRequest},
     auth::{AuthResponse, LoginRequest, RefreshRequest, RegisterRequest, UserResponse},
     bookmarks::{Bookmark, BookmarkItem, CreateBookmarkRequest, UpdateBookmarkRequest},
     cache::CleanParams,
@@ -49,6 +50,9 @@ use crate::services::tracking::CheckSummary;
         crate::routes::tracking::update_tracked,
         crate::routes::tracking::delete_tracked,
         crate::routes::tracking::check_tracked,
+        // App settings
+        crate::routes::app_settings::get_app_settings,
+        crate::routes::app_settings::update_app_settings,
         // Crunchyroll
         crate::routes::crunchyroll::cr_login,
         crate::routes::crunchyroll::cr_logout,
@@ -100,6 +104,8 @@ use crate::services::tracking::CheckSummary;
         AddTrackingRequest,
         UpdateTrackingRequest,
         CheckSummary,
+        AppSettings,
+        UpdateAppSettingsRequest,
         CrLoginRequest,
         CrLoginResponse,
         SearchParams,
@@ -117,6 +123,7 @@ use crate::services::tracking::CheckSummary;
         (name = "API Keys", description = "Per-user API keys for non-interactive auth"),
         (name = "Bookmarks", description = "Per-user saved series"),
         (name = "Watchlist", description = "Series tracking and auto-download"),
+        (name = "App Settings", description = "Server-wide settings"),
         (name = "Crunchyroll", description = "Crunchyroll account linking"),
         (name = "Search", description = "Search Crunchyroll catalog"),
         (name = "Content", description = "Browse series, seasons, and episodes"),

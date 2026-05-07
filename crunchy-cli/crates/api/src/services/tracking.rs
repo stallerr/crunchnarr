@@ -12,7 +12,7 @@ use serde::Serialize;
 use sqlx::SqlitePool;
 use std::collections::HashSet;
 use std::sync::Arc;
-use tokio::time::{interval, Duration, MissedTickBehavior};
+use tokio::time::{sleep, Duration};
 use tracing::{error, info, warn};
 use utoipa::ToSchema;
 
@@ -29,34 +29,42 @@ pub struct TrackingService {
     db: SqlitePool,
     download_service: Arc<DownloadService>,
     crunchyroll_service: CrunchyrollService,
-    check_interval_secs: u64,
+    /// Fallback interval used when no row in `app_settings` overrides it.
+    /// Comes from the `TRACKING_INTERVAL_SECS` env var.
+    default_interval_secs: u64,
 }
 
 impl TrackingService {
     pub fn new(
         db: SqlitePool,
         download_service: Arc<DownloadService>,
-        check_interval_secs: u64,
+        default_interval_secs: u64,
     ) -> Arc<Self> {
         Arc::new(Self {
             crunchyroll_service: CrunchyrollService::new(db.clone()),
             db,
             download_service,
-            check_interval_secs,
+            default_interval_secs,
         })
     }
 
-    /// Spawn a background loop that calls `run_check` every
-    /// `check_interval_secs`. Drops missed ticks if a previous run is still
-    /// in flight.
+    /// Read the active polling interval. DB override (set via the web UI)
+    /// wins; otherwise fall back to the value passed at construction.
+    async fn current_interval(&self) -> Duration {
+        let secs = db::app_settings::get_tracking_interval_secs(&self.db)
+            .await
+            .unwrap_or(self.default_interval_secs);
+        Duration::from_secs(secs)
+    }
+
+    /// Spawn a background loop that calls `run_check` periodically. The
+    /// interval is re-read from the DB on every iteration so changes from
+    /// `PATCH /app-settings` apply on the next tick without a restart.
     pub fn spawn(self: Arc<Self>) {
         tokio::spawn(async move {
-            let mut tick = interval(Duration::from_secs(self.check_interval_secs));
-            tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
-            // Skip the immediate first tick — let the server warm up first.
-            tick.tick().await;
             loop {
-                tick.tick().await;
+                let interval = self.current_interval().await;
+                sleep(interval).await;
                 if let Err(e) = self.run_check().await {
                     error!("Tracking poll failed: {:?}", e);
                 }

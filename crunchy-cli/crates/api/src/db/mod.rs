@@ -1,6 +1,7 @@
 //! Database module - SQLite pool setup and migrations.
 
 pub mod api_keys;
+pub mod app_settings;
 pub mod auth;
 pub mod bookmarks;
 pub mod tracking;
@@ -72,6 +73,8 @@ async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
             return Err(e);
         }
     }
+    let migration_011 = include_str!("migrations/011_app_settings.sql");
+    sqlx::raw_sql(migration_011).execute(pool).await?;
     info!("Database migrations applied");
     Ok(())
 }

@@ -1,14 +1,24 @@
 'use client';
 
-import { CheckIcon, ShieldOffIcon } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { CheckIcon, ClapperboardIcon, ShieldOffIcon } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardDescription, CardPanel } from '@/components/ui/card';
-import { Field, FieldLabel } from '@/components/ui/field';
+import { Button } from '@/components/ui/button';
+import { Field, FieldLabel, FieldDescription } from '@/components/ui/field';
 import { RadioGroup, Radio } from '@/components/ui/radio-group';
+import {
+  NumberField,
+  NumberFieldGroup,
+  NumberFieldInput,
+  NumberFieldIncrement,
+  NumberFieldDecrement,
+} from '@/components/ui/number-field';
 import { ToggleOption } from '@/components/ui/toggle-option';
 import { useAccentColor, ACCENT_COLORS } from '@/components/providers/accent-color-provider';
 import { useNavigationMode } from '@/components/providers/navigation-provider';
 import { useDensity } from '@/components/providers/density-provider';
 import { useConfirmCancel } from '@/components/providers/confirm-cancel-provider';
+import { useAppSettings, useUpdateAppSettings } from '@/hooks/use-app-settings';
 import { cn } from '@/lib/utils';
 
 const NAV_OPTIONS = [
@@ -139,6 +149,69 @@ export function SiteSettingsPanel() {
           />
         </CardPanel>
       </Card>
+
+      <WatchlistSettings />
     </div>
+  );
+}
+
+function WatchlistSettings() {
+  const { data, isLoading, refetch } = useAppSettings();
+  const { execute, isLoading: saving } = useUpdateAppSettings();
+  const [minutes, setMinutes] = useState<number>(60);
+
+  useEffect(() => {
+    if (data) setMinutes(Math.round(data.tracking_interval_secs / 60));
+  }, [data]);
+
+  const handleSave = async () => {
+    const secs = Math.max(5, Math.min(1440, minutes)) * 60;
+    const { error } = await execute({ tracking_interval_secs: secs });
+    if (!error) refetch();
+  };
+
+  const dirty =
+    !!data && Math.round(data.tracking_interval_secs / 60) !== minutes;
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center gap-2">
+          <ClapperboardIcon className="size-4 text-primary" />
+          <CardTitle>Watchlist</CardTitle>
+        </div>
+        <CardDescription>
+          Server-wide setting. Changes apply on the next polling cycle.
+        </CardDescription>
+      </CardHeader>
+      <CardPanel className="flex flex-col gap-4">
+        <Field>
+          <FieldLabel>Polling interval (minutes)</FieldLabel>
+          <NumberField
+            value={minutes}
+            onValueChange={(v) => setMinutes(v ?? 60)}
+            min={5}
+            max={1440}
+            step={5}
+            disabled={isLoading || saving}
+          >
+            <NumberFieldGroup>
+              <NumberFieldDecrement />
+              <NumberFieldInput />
+              <NumberFieldIncrement />
+            </NumberFieldGroup>
+          </NumberField>
+          <FieldDescription>
+            How often the watchlist worker checks every tracked series for new
+            episodes and dub upgrades. Min 5 minutes, max 24 hours.
+          </FieldDescription>
+        </Field>
+        <div className="flex justify-end">
+          <Button onClick={handleSave} disabled={!dirty || saving}>
+            {saving ? 'Saving…' : 'Save'}
+          </Button>
+        </div>
+      </CardPanel>
+    </Card>
   );
 }
