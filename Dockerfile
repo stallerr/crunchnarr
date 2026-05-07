@@ -13,7 +13,8 @@ RUN mkdir build && cd build \
     && make -j$(nproc) mp4decrypt
 
 # ---- Stage 2: Build Rust API ----
-FROM rust:1.88-bookworm AS api-builder
+# 1.91+ required by aws-smithy-types and friends pulled via aws-sdk-s3.
+FROM rust:1-bookworm AS api-builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
