@@ -16,6 +16,14 @@ use tokio::time::{sleep, Duration};
 use tracing::{error, info, warn};
 use utoipa::ToSchema;
 
+/// Pause between consecutive `check_series` calls inside a single tick.
+/// Spreads CR API requests across the polling window so a user with a
+/// long backlog doesn't fire hundreds of requests back-to-back.
+const INTER_SERIES_DELAY: Duration = Duration::from_millis(500);
+
+/// Fallback `Retry-After` when CR returns 429 with no header.
+const DEFAULT_RATE_LIMIT_BACKOFF: Duration = Duration::from_secs(60);
+
 /// Counts returned by a manual `POST /tracking/:id/check` so the UI can
 /// surface "started 3 new downloads, 1 upgrade".
 #[derive(Debug, Default, Serialize, ToSchema, Clone)]
@@ -75,8 +83,14 @@ impl TrackingService {
     async fn run_check(&self) -> Result<(), ApiError> {
         let entries = db::tracking::list_all_enabled(&self.db).await?;
         info!("Tracking poll: {} enabled series", entries.len());
-        for entry in entries {
-            match self.check_series(&entry).await {
+        for (i, entry) in entries.iter().enumerate() {
+            // Spread CR API load across the tick: small sleep between every
+            // series after the first.
+            if i > 0 {
+                sleep(INTER_SERIES_DELAY).await;
+            }
+
+            match self.check_series(entry).await {
                 Ok(summary) => {
                     if summary.new_downloads > 0 || summary.upgrades > 0 {
                         info!(
@@ -86,6 +100,25 @@ impl TrackingService {
                             summary.upgrades
                         );
                     }
+                }
+                Err(ApiError::RateLimited { retry_after }) => {
+                    // CR is throttling us. Hammering through the rest of the
+                    // backlog will only deepen the throttle — bail out of the
+                    // tick. Sleep at least the server-suggested Retry-After
+                    // so the next tick starts on the right side of the window.
+                    let wait = retry_after
+                        .map(Duration::from_secs)
+                        .unwrap_or(DEFAULT_RATE_LIMIT_BACKOFF);
+                    warn!(
+                        "Crunchyroll rate-limited the tracking poll \
+                         (Retry-After: {}s, {} of {} series checked); \
+                         aborting tick and backing off",
+                        wait.as_secs(),
+                        i,
+                        entries.len()
+                    );
+                    sleep(wait).await;
+                    return Ok(());
                 }
                 Err(e) => {
                     warn!(
