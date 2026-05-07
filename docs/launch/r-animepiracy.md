@@ -25,18 +25,25 @@ It's a self-hosted server (Rust API + Next.js web UI) that:
 
 ### Setup
 
+Drop your `client_id.bin` + `private_key.pem` into a `./widevine` dir, then:
+
 ```bash
 docker run -d \
   --network host \
+  -e PORT=8080 -e HOST=0.0.0.0 \
+  -e DATABASE_URL=sqlite:/data/crunchy-api.db?mode=rwc \
   -e JWT_SECRET=$(openssl rand -base64 32) \
   -e STORAGE_SECRET_KEY=$(openssl rand -hex 32) \
+  -e API_URL=http://localhost:8080 \
   -v ./data:/data \
   -v ./downloads:/downloads \
   -v ./widevine:/widevine:ro \
   ghcr.io/stallerr/crunchnarr:latest
 ```
 
-UI at `:3000`. Register, link your CR account in Settings, drop your CDM via the file pickers, add a series.
+(Image is multi-arch: `linux/amd64` + `linux/arm64`.)
+
+UI at `http://localhost:3000`. Register an account, link your CR account in **Account → Crunchyroll**, then add a series. The mounted CDM at `/widevine` is read by the API on demand — no in-UI upload needed if it's mounted.
 
 ### Stack
 

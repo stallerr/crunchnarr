@@ -6,7 +6,7 @@
 
 > *Sonarr for Crunchyroll, with auto dub upgrades.*
 
-A self-hosted server that watches your favourite Crunchyroll series, downloads new episodes as they release, and **re-downloads completed episodes when missing audio dubs become available**. Multi-user, web UI, REST API, *Arr-style API keys.
+A self-hosted server that watches your favourite Crunchyroll series, downloads new episodes as they release, and **re-downloads completed episodes when missing audio dubs become available**. Multi-user, web UI, REST API, Sonarr-style API keys (`X-Api-Key` header, `crl_` prefix).
 
 This is for the self-hosted / *Arr-stack crowd: Synology / Unraid / TrueNAS users who already run Sonarr, Radarr, Bazarr, Jellyfin, etc., and want a Crunchyroll piece that fits the same ergonomic.
 
@@ -17,7 +17,7 @@ Most Crunchyroll downloaders are single-user GUI desktop apps focused on ad-hoc 
 - **Headless server** with a web UI you reach from any device on the LAN.
 - **Watchlist with auto-download** — pick `new_only` (only future releases) or `all` (backfill + ongoing).
 - **Dub-upgrade detection** — if you originally downloaded *Frieren* sub-only and the JP dub later appears, Crunchnarr re-downloads it on the next poll. 24h cooldown so it doesn't hammer CR while waiting for a dub that hasn't dropped yet.
-- **API keys** (`X-Api-Key: crl_...`) usable on every protected route — drop into shell scripts, Home Assistant automations, etc.
+- **API keys** (`X-Api-Key: crl_...`, same header shape as Sonarr) usable on every protected route — drop into shell scripts, Home Assistant automations, etc.
 - **Manual mark-as-downloaded** — flag episodes (or whole seasons) you already have on disk so the watchlist leaves them alone.
 - **S3-compatible storage** — publish to MinIO / Backblaze / R2 instead of (or alongside) a local folder.
 - **Bookmarks** — save series for later with editable per-series notes.
@@ -31,9 +31,9 @@ Most Crunchyroll downloaders are single-user GUI desktop apps focused on ad-hoc 
 | ![Downloads](docs/screenshots/13-downloads-active.png) | ![Link Crunchyroll](docs/screenshots/07-link-crunchyroll.png) |
 | Downloads queue — active + completed history with thumbnails | Linking a Crunchyroll account |
 | ![Settings — Site](docs/screenshots/09-settings-site.png) | ![Settings — Downloads](docs/screenshots/08-settings-downloads.png) |
-| Site settings (theme + watchlist polling) | Download preferences |
+| Site settings (accent color, density, watchlist polling) | Download preferences |
 | ![Settings — API keys](docs/screenshots/10-settings-api-keys.png) | ![Sign in](docs/screenshots/01-login.png) |
-| *Arr-style API keys | Sign in |
+| API keys (`X-Api-Key: crl_...`) | Sign in |
 
 ## Quick start (Docker)
 
@@ -54,17 +54,35 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-Or use the prebuilt image from GitHub Container Registry (no local build):
+Or use the prebuilt image from GitHub Container Registry (no local build) — drop in a sibling `docker-compose.ghcr.yml`:
 
 ```yaml
-# docker-compose.override.yml
+# docker-compose.ghcr.yml
 services:
   app:
     image: ghcr.io/stallerr/crunchnarr:latest
-    build: !reset null
+    network_mode: host
+    environment:
+      - PORT=8080
+      - HOST=0.0.0.0
+      - DATABASE_URL=sqlite:/data/crunchy-api.db?mode=rwc
+      - JWT_SECRET=${JWT_SECRET:?}
+      - STORAGE_SECRET_KEY=${STORAGE_SECRET_KEY:?}
+      - DOWNLOADS_DIR=/downloads
+      - API_URL=http://localhost:8080
+    volumes:
+      - api-data:/data
+      - ${DOWNLOADS_DIR:-./downloads}:/downloads
+      - ${WIDEVINE_DIR:?}:/widevine:ro
+    restart: unless-stopped
+
+volumes:
+  api-data:
 ```
 
-Open `http://localhost:3000`. Register an account, link your Crunchyroll account in Settings → Crunchyroll, drop your Widevine credentials in Settings → Downloads → Widevine DRM, and you're up.
+Then `docker compose -f docker-compose.ghcr.yml up -d`. The image publishes for both `linux/amd64` and `linux/arm64`.
+
+Open `http://localhost:3000`. Register an account, link your Crunchyroll account in **Account → Crunchyroll**, drop your Widevine credentials in **Settings → Downloads → Widevine DRM**, and you're up.
 
 ### Required environment variables
 
@@ -143,11 +161,15 @@ cargo run -p crunchy-api
 
 ### Web (Next.js 16)
 
+The project locks with `bun` (the Dockerfile uses `bun install --frozen-lockfile`). Use bun for parity:
+
 ```bash
 cd crunchy-web
-npm install
-NEXT_PUBLIC_API_URL=http://localhost:8080 npm run dev
+bun install
+NEXT_PUBLIC_API_URL=http://localhost:8080 bun run dev
 ```
+
+`npm install` works too but generates a divergent `package-lock.json` that may resolve different transitive versions than CI.
 
 ### Project layout
 
@@ -162,7 +184,10 @@ crunchnarr/
 ├── crunchy-web/         # Next.js 16 web UI
 ├── Dockerfile           # Combined image (entrypoint runs both)
 ├── docker-compose.yml
-└── PLAN_*.md            # In-tree design docs for the bigger features
+└── docs/
+    ├── screenshots/     # README gallery
+    ├── design/          # In-tree design docs (PLAN_*)
+    └── launch/          # Launch-post drafts
 ```
 
 (Internal crate names still say `crunchy-*`. Cosmetic; not user-visible.)

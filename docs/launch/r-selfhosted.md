@@ -38,12 +38,16 @@ So I built **Crunchnarr** and just open-sourced it: https://github.com/stallerr/
 # docker-compose.yml
 services:
   app:
-    image: ghcr.io/stallerr/crunchnarr:latest
+    image: ghcr.io/stallerr/crunchnarr:latest    # multi-arch: amd64 + arm64
     network_mode: host
     environment:
+      - PORT=8080
+      - HOST=0.0.0.0
+      - DATABASE_URL=sqlite:/data/crunchy-api.db?mode=rwc
       - JWT_SECRET=${JWT_SECRET}
       - STORAGE_SECRET_KEY=${STORAGE_SECRET_KEY}
       - DOWNLOADS_DIR=/downloads
+      - API_URL=http://localhost:8080
     volumes:
       - api-data:/data
       - ${DOWNLOADS_DIR}:/downloads
@@ -57,7 +61,7 @@ Generate `JWT_SECRET` (`openssl rand -base64 32`) and `STORAGE_SECRET_KEY` (`ope
 
 ### NAS-friendly
 
-If your `DOWNLOADS_DIR` is a mounted SMB/NFS share, the publish step falls back from `rename(2)` to a byte-stream copy when `EXDEV` (cross-FS) or `EPERM` (some NAS rejects metadata copy) trip. No metadata preservation — pure bytes.
+If your `DOWNLOADS_DIR` is a mounted SMB/NFS share, the publish step falls back from `rename(2)` to a byte-stream copy when `EXDEV` (cross-filesystem) trips. No metadata preservation — pure bytes.
 
 ### Honest disclaimer
 
@@ -66,7 +70,6 @@ You provide the Widevine CDM. The project does not bundle one and there's no pat
 ### Where it could use help
 
 - Test on Synology / Unraid / TrueNAS native Docker setups (I run macOS for dev).
-- Multi-arch image (currently amd64 only on first release).
 - More filename-template presets / nicer UI for editing.
 - Per-watchlist-entry override for polling cadence (currently global).
 
@@ -79,4 +82,4 @@ Issues/PRs welcome. Repo: https://github.com/stallerr/crunchnarr
 - Lead with the watchlist screenshot. Then series page with the Marked / Tracked badges. Then the "Add Show" search modal.
 - Don't reply to "is this legal" questions argumentatively — link the legal section in the README and move on.
 - Expect "what about devine / streamlink-binge / cli-equivalent X" comparisons. Acknowledge them, lean on the *Arr-stack ergonomic as the differentiator.
-- Don't promise multi-arch images, scheduled updates, etc. — only commit to what's already shipped.
+- Image already publishes for `linux/amd64` + `linux/arm64`. Don't promise other arches or scheduled-update features beyond what's shipped.

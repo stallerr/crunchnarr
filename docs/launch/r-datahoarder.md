@@ -29,10 +29,9 @@ Other bits worth flagging for archivists:
 ### Caveats
 
 - You supply your own Widevine L3 CDM. The project does not ship one and there's no DRM-bypass path in the code beyond what your own CDM negotiates. Crunchnarr is purely an automation layer over the official streaming pipeline.
-- Single-arch image at launch (linux/amd64). Multi-arch is on the list once people start asking.
 - TOS-wise: this is a personal-archive tool. CR's terms may prohibit ripping. Use only with content you can legitimately access on your own account.
 
-Stack: Rust API server, Next.js web UI, SQLite. MIT licensed. Repo: https://github.com/stallerr/crunchnarr
+Stack: Rust API server, Next.js web UI, SQLite. MIT licensed. Multi-arch image (`linux/amd64` + `linux/arm64`). Repo: https://github.com/stallerr/crunchnarr
 
 ---
 
