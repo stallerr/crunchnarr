@@ -221,3 +221,7 @@ You provide the Widevine CDM. Crunchnarr does not bypass any DRM that you haven'
 ## License
 
 [MIT](LICENSE).
+
+The published Docker image bundles third-party tools (mp4decrypt from
+Bento4, FFmpeg) that have their own licenses. See [NOTICES.md](NOTICES.md)
+for the full breakdown and source-code pointers (per GPL §3).

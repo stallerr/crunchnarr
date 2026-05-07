@@ -62,9 +62,15 @@ RUN useradd -m -s /bin/bash crunchy \
     && mkdir -p /home/crunchy/.config/crunchy-cli /downloads /widevine /data /app \
     && chown -R crunchy:crunchy /home/crunchy /downloads /widevine /data /app
 
-# Copy API binary and mp4decrypt
+# Copy API binary and mp4decrypt.
+# mp4decrypt is from Bento4 (https://github.com/axiomatic-systems/Bento4),
+# distributed under GPL v2. Source available at the URL above; full notice
+# in /NOTICES.md.
 COPY --from=bento4-builder /bento4/build/mp4decrypt /usr/local/bin/mp4decrypt
 COPY --from=api-builder /build/target/release/crunchy-api /usr/local/bin/crunchy-api
+
+# Bundle NOTICES so the image carries third-party license info.
+COPY --chown=crunchy:crunchy NOTICES.md /NOTICES.md
 
 # Copy Next.js standalone app
 COPY --from=web-builder --chown=crunchy:crunchy /app/public /app/public
