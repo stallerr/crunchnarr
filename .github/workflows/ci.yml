@@ -1,0 +1,59 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel in-progress runs for the same ref when a new push lands.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  api:
+    name: api (cargo check + test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: crunchy-cli
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry + target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crunchy-cli
+
+      - name: cargo check
+        run: cargo check -p crunchy-api --all-features
+
+      - name: cargo test
+        run: cargo test -p crunchy-api --all-features
+
+      - name: cargo clippy
+        run: cargo clippy -p crunchy-api -- -D warnings
+
+  web:
+    name: web (next build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: crunchy-web
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install deps
+        run: bun install --frozen-lockfile
+
+      - name: Build
+        run: bun run build

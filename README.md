@@ -1,5 +1,9 @@
 # Crunchnarr
 
+[![ci](https://github.com/stallerr/crunchnarr/actions/workflows/ci.yml/badge.svg)](https://github.com/stallerr/crunchnarr/actions/workflows/ci.yml)
+[![docker](https://github.com/stallerr/crunchnarr/actions/workflows/docker.yml/badge.svg)](https://github.com/stallerr/crunchnarr/actions/workflows/docker.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 > *Sonarr for Crunchyroll, with auto dub upgrades.*
 
 A self-hosted server that watches your favourite Crunchyroll series, downloads new episodes as they release, and **re-downloads completed episodes when missing audio dubs become available**. Multi-user, web UI, REST API, *Arr-style API keys.
@@ -39,6 +43,16 @@ cp .env.example .env
 # Edit .env — at minimum set JWT_SECRET, STORAGE_SECRET_KEY, WIDEVINE_DIR
 
 docker compose up -d --build
+```
+
+Or use the prebuilt image from GitHub Container Registry (no local build):
+
+```yaml
+# docker-compose.override.yml
+services:
+  app:
+    image: ghcr.io/stallerr/crunchnarr:latest
+    build: !reset null
 ```
 
 Open `http://localhost:3000`. Register an account, link your Crunchyroll account in Settings → Crunchyroll, drop your Widevine credentials in Settings → Downloads → Widevine DRM, and you're up.
