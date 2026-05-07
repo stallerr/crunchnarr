@@ -21,6 +21,16 @@ pub struct ServerConfig {
     pub downloads_dir: PathBuf,
     /// Watchlist polling interval in seconds (default: 1 hour).
     pub tracking_interval_secs: u64,
+    /// Crunchyroll API request rate cap, per linked CR account (default: 3 RPS).
+    pub cr_rate_limit_rps: u32,
+    /// Crunchyroll API per-account burst capacity (default: 6).
+    pub cr_rate_limit_burst: u32,
+    /// Crunchyroll API request rate cap aggregated across all users in this
+    /// process (default: 15 RPS). Protects against multi-tenant deployments
+    /// breaching CR's per-IP throttle.
+    pub cr_rate_limit_global_rps: u32,
+    /// Global burst capacity (default: 30).
+    pub cr_rate_limit_global_burst: u32,
 }
 
 impl Default for ServerConfig {
@@ -36,6 +46,10 @@ impl Default for ServerConfig {
                 .unwrap_or_else(|| PathBuf::from("./downloads"))
                 .join("Crunchyroll"),
             tracking_interval_secs: 3600,
+            cr_rate_limit_rps: 3,
+            cr_rate_limit_burst: 6,
+            cr_rate_limit_global_rps: 15,
+            cr_rate_limit_global_burst: 30,
         }
     }
 }
@@ -67,6 +81,22 @@ impl ServerConfig {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(default.tracking_interval_secs),
+            cr_rate_limit_rps: std::env::var("CRUNCHYROLL_RATE_LIMIT_RPS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default.cr_rate_limit_rps),
+            cr_rate_limit_burst: std::env::var("CRUNCHYROLL_RATE_LIMIT_BURST")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default.cr_rate_limit_burst),
+            cr_rate_limit_global_rps: std::env::var("CRUNCHYROLL_RATE_LIMIT_GLOBAL_RPS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default.cr_rate_limit_global_rps),
+            cr_rate_limit_global_burst: std::env::var("CRUNCHYROLL_RATE_LIMIT_GLOBAL_BURST")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default.cr_rate_limit_global_burst),
         }
     }
 }

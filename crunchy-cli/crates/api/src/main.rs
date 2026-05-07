@@ -3,6 +3,7 @@
 use crunchy_api::config::ServerConfig;
 use crunchy_api::db;
 use crunchy_api::routes;
+use crunchy_api::services::crunchyroll::RateLimiterPool;
 use crunchy_api::services::download::DownloadService;
 use crunchy_api::services::tracking::TrackingService;
 use crunchy_api::services::ws::WsBroadcaster;
@@ -25,6 +26,22 @@ async fn main() -> anyhow::Result<()> {
     // Load config
     let config = ServerConfig::from_env();
     info!("Starting crunchy-api on {}:{}", config.host, config.port);
+
+    // Initialize the Crunchyroll request rate-limiter pool. Must happen
+    // before any code path can call CrunchyrollService::get_client.
+    RateLimiterPool::init(
+        config.cr_rate_limit_rps,
+        config.cr_rate_limit_burst,
+        config.cr_rate_limit_global_rps,
+        config.cr_rate_limit_global_burst,
+    );
+    info!(
+        "Crunchyroll rate limit: per-user {} RPS (burst {}), global {} RPS (burst {})",
+        config.cr_rate_limit_rps,
+        config.cr_rate_limit_burst,
+        config.cr_rate_limit_global_rps,
+        config.cr_rate_limit_global_burst,
+    );
 
     // Initialize database
     let db_pool = db::init_pool(&config.database_url).await?;

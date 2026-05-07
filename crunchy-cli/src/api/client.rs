@@ -1,5 +1,6 @@
 //! HTTP client wrapper for Crunchyroll API.
 
+use crate::api::throttle::{acquire_all, RequestRateLimiter};
 use crate::api::token_store::{FileTokenStore, TokenStore, Tokens};
 use crate::config::Config;
 use crate::error::{ApiError, AuthError, Error, Result};
@@ -61,6 +62,11 @@ pub struct CrunchyrollClient {
     token_store: Arc<dyn TokenStore>,
     /// Current access token (cached for fast access)
     access_token: RwLock<Option<String>>,
+    /// Chain of token-bucket limiters acquired in order before every
+    /// outbound request (per-user, then global, etc.). Empty = unlimited.
+    /// Segment-CDN downloads use a separate `reqwest::Client` and do not
+    /// pass through this limiter.
+    rate_limiters: Vec<Arc<RequestRateLimiter>>,
 }
 
 impl CrunchyrollClient {
@@ -79,6 +85,19 @@ impl CrunchyrollClient {
     pub async fn with_token_store(
         config: Arc<RwLock<Config>>,
         token_store: Arc<dyn TokenStore>,
+    ) -> Result<Self> {
+        Self::with_token_store_and_rate_limiters(config, token_store, Vec::new()).await
+    }
+
+    /// Like [`with_token_store`] but installs a chain of [`RequestRateLimiter`]s
+    /// that are acquired in order before every outbound request. Used by the
+    /// API server crate to layer per-user + global caps.
+    ///
+    /// [`with_token_store`]: Self::with_token_store
+    pub async fn with_token_store_and_rate_limiters(
+        config: Arc<RwLock<Config>>,
+        token_store: Arc<dyn TokenStore>,
+        rate_limiters: Vec<Arc<RequestRateLimiter>>,
     ) -> Result<Self> {
         let config_read = config.read().await;
 
@@ -117,7 +136,17 @@ impl CrunchyrollClient {
             config,
             token_store,
             access_token: RwLock::new(access_token),
+            rate_limiters,
         })
+    }
+
+    /// Acquire one token from each rate limiter in the chain. Inlined ahead
+    /// of every outbound request — segment CDN traffic uses a separate
+    /// reqwest client and bypasses this code path.
+    async fn throttle(&self) {
+        if !self.rate_limiters.is_empty() {
+            acquire_all(&self.rate_limiters).await;
+        }
     }
 
     /// Get the base URL for API requests.
@@ -216,6 +245,8 @@ impl CrunchyrollClient {
     /// - Proactively refreshes if the token is expired or expiring soon
     /// - Reactively refreshes and retries on 401 Unauthorized responses
     pub async fn get(&self, url: &str) -> Result<Response> {
+        self.throttle().await;
+
         // Proactive refresh: ensure token is valid before making request
         self.ensure_valid_token().await?;
 
@@ -300,6 +331,7 @@ impl CrunchyrollClient {
 
     /// Make an unauthenticated GET request.
     pub async fn get_anonymous(&self, url: &str) -> Result<Response> {
+        self.throttle().await;
         debug!("GET (anonymous) {}", url);
 
         let start = Instant::now();
@@ -323,6 +355,7 @@ impl CrunchyrollClient {
         url: &str,
         form: &T,
     ) -> Result<Response> {
+        self.throttle().await;
         debug!("POST {}", url);
 
         let start = Instant::now();
@@ -349,6 +382,7 @@ impl CrunchyrollClient {
         client_id: &str,
         client_secret: &str,
     ) -> Result<Response> {
+        self.throttle().await;
         debug!("POST {} (with basic auth)", url);
         trace!("Basic auth client_id: {}", redact(client_id));
 
@@ -377,6 +411,7 @@ impl CrunchyrollClient {
         form: &T,
         basic_token: &str,
     ) -> Result<Response> {
+        self.throttle().await;
         debug!("POST {} (with basic token)", url);
         trace!("Basic token: {}", redact(basic_token));
 
@@ -406,6 +441,7 @@ impl CrunchyrollClient {
         basic_token: &str,
         user_agent: &str,
     ) -> Result<Response> {
+        self.throttle().await;
         debug!("POST {} (with basic token)", url);
         trace!("User-Agent: {}", user_agent);
 
@@ -433,6 +469,8 @@ impl CrunchyrollClient {
     /// - Proactively refreshes if the token is expired or expiring soon
     /// - Reactively refreshes and retries on 401 Unauthorized responses
     pub async fn patch(&self, url: &str) -> Result<Response> {
+        self.throttle().await;
+
         // Proactive refresh: ensure token is valid before making request
         self.ensure_valid_token().await?;
 

@@ -1,18 +1,81 @@
 //! Per-user Crunchyroll client factory.
 //!
 //! Creates `CrunchyrollClient` instances from DB-stored credentials,
-//! handles token refresh writeback.
+//! handles token refresh writeback, and chains a per-user + global
+//! request-rate limiter onto every outbound CR-API call.
 
 use crate::db::auth;
 use crate::error::ApiError;
 use crate::services::db_token_store::DbTokenStore;
 use chrono::Utc;
 use crunchy_cli::api::token_store::TokenStore;
-use crunchy_cli::api::CrunchyrollClient;
+use crunchy_cli::api::{CrunchyrollClient, RequestRateLimiter};
 use crunchy_cli::config::Config;
 use sqlx::SqlitePool;
-use std::sync::Arc;
-use tokio::sync::RwLock;
+use std::collections::HashMap;
+use std::sync::{Arc, OnceLock};
+use tokio::sync::{Mutex, RwLock};
+
+/// Process-wide rate-limiter pool. Initialized once from environment at
+/// API server startup; afterwards, every `get_client` call layers the
+/// caller's per-user bucket on top of the global bucket.
+static RATE_LIMITER_POOL: OnceLock<RateLimiterPool> = OnceLock::new();
+
+/// Per-user + global request-rate caps for outbound Crunchyroll API calls.
+///
+/// CR throttles per-account, so per-user caps prevent one user's bulk add
+/// from starving another. CR (or the Cloudflare WAF in front of it) also
+/// throttles per-IP, so a global cap protects multi-tenant deployments
+/// that share a single egress IP.
+pub struct RateLimiterPool {
+    global: Arc<RequestRateLimiter>,
+    per_user: Mutex<HashMap<String, Arc<RequestRateLimiter>>>,
+    per_user_rps: u32,
+    per_user_burst: u32,
+}
+
+impl RateLimiterPool {
+    /// Initialize the process-wide pool. Must be called once at startup
+    /// before any `get_client` invocation. Subsequent calls are no-ops.
+    pub fn init(
+        per_user_rps: u32,
+        per_user_burst: u32,
+        global_rps: u32,
+        global_burst: u32,
+    ) {
+        let _ = RATE_LIMITER_POOL.set(RateLimiterPool {
+            global: RequestRateLimiter::new(global_rps, global_burst),
+            per_user: Mutex::new(HashMap::new()),
+            per_user_rps,
+            per_user_burst,
+        });
+    }
+
+    /// Build the limiter chain (per-user, then global) for `user_id`. The
+    /// per-user bucket is created lazily on first use and reused on
+    /// subsequent calls for the same user.
+    async fn chain_for(&self, user_id: &str) -> Vec<Arc<RequestRateLimiter>> {
+        let user_limiter = {
+            let mut map = self.per_user.lock().await;
+            map.entry(user_id.to_string())
+                .or_insert_with(|| {
+                    RequestRateLimiter::new(self.per_user_rps, self.per_user_burst)
+                })
+                .clone()
+        };
+        vec![user_limiter, self.global.clone()]
+    }
+}
+
+/// Build the limiter chain for `user_id` if the pool has been initialized.
+/// Falls back to an empty (unlimited) chain when running in test/CLI
+/// contexts that didn't call `RateLimiterPool::init`.
+async fn limiter_chain_for(user_id: &str) -> Vec<Arc<RequestRateLimiter>> {
+    match RATE_LIMITER_POOL.get() {
+        Some(pool) => pool.chain_for(user_id).await,
+        None => Vec::new(),
+    }
+}
 
 /// Service for managing per-user Crunchyroll clients.
 pub struct CrunchyrollService {
@@ -59,14 +122,24 @@ impl CrunchyrollService {
             user_id.to_string(),
             device_id,
         ));
-        let client = CrunchyrollClient::with_token_store(config, token_store)
-            .await
-            .map_err(|e| ApiError::Internal(format!("Failed to create CR client: {}", e)))?;
+        let limiters = limiter_chain_for(user_id).await;
+        let client = CrunchyrollClient::with_token_store_and_rate_limiters(
+            config,
+            token_store,
+            limiters,
+        )
+        .await
+        .map_err(|e| ApiError::Internal(format!("Failed to create CR client: {}", e)))?;
 
         Ok(client)
     }
 
     /// Login to Crunchyroll and store credentials.
+    ///
+    /// Login uses an unlimited client — the user has no bucket yet, and
+    /// rate-limiting the auth endpoint here doesn't help (one-shot per user).
+    /// A login-route-level throttle in `routes/crunchyroll.rs` is the right
+    /// tool against malicious frontends; out of scope for this layer.
     pub async fn login(
         &self,
         user_id: &str,

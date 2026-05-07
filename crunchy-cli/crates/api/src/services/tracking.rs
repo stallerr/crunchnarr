@@ -16,12 +16,10 @@ use tokio::time::{sleep, Duration};
 use tracing::{error, info, warn};
 use utoipa::ToSchema;
 
-/// Pause between consecutive `check_series` calls inside a single tick.
-/// Spreads CR API requests across the polling window so a user with a
-/// long backlog doesn't fire hundreds of requests back-to-back.
-const INTER_SERIES_DELAY: Duration = Duration::from_millis(500);
-
-/// Fallback `Retry-After` when CR returns 429 with no header.
+/// Fallback `Retry-After` when CR returns 429 with no header. The CR client's
+/// per-user + global request-rate limiters (see `services/crunchyroll.rs`)
+/// prevent most 429s; this is the belt-and-suspenders catch for residuals
+/// from Cloudflare WAF burst windows.
 const DEFAULT_RATE_LIMIT_BACKOFF: Duration = Duration::from_secs(60);
 
 /// Counts returned by a manual `POST /tracking/:id/check` so the UI can
@@ -84,12 +82,6 @@ impl TrackingService {
         let entries = db::tracking::list_all_enabled(&self.db).await?;
         info!("Tracking poll: {} enabled series", entries.len());
         for (i, entry) in entries.iter().enumerate() {
-            // Spread CR API load across the tick: small sleep between every
-            // series after the first.
-            if i > 0 {
-                sleep(INTER_SERIES_DELAY).await;
-            }
-
             match self.check_series(entry).await {
                 Ok(summary) => {
                     if summary.new_downloads > 0 || summary.upgrades > 0 {
