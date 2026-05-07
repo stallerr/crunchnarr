@@ -112,6 +112,22 @@ The compose file uses `network_mode: host` so the API's outbound calls use the h
 
 > **macOS users:** host networking doesn't work on Docker Desktop for Mac. For local dev, run the API natively (see [Development](#development)).
 
+### First Crunchyroll login (Cloudflare gotcha)
+
+Crunchyroll's auth endpoints sit behind Cloudflare's bot-protection. Username + password logins from datacenter IPs (most cloud VMs, some VPN exits, freshly-allocated residential IPs) get challenged with the "Just a moment…" page and the API returns:
+
+```
+CR login failed: API error: DDoS protection detected: Cloudflare protection detected
+```
+
+Two known workarounds:
+
+1. **Log in from a residential IP first.** Run Crunchnarr on your home/LAN machine for the initial CR link, then move the volume (or just the SQLite DB) to your VPS. The refresh-token in the DB survives a cross-machine move and won't re-trigger the challenge on subsequent polls.
+
+2. **Paste a refresh-token from a real browser.** Log into crunchyroll.com in a normal browser, grab the `etp_rt` cookie value, and `POST /crunchyroll/login` with `{"refresh_token": "..."}` instead of username/password.
+
+This is a Crunchyroll-side wall, not a Crunchnarr bug — every server-side CR client (incl. `crunchy-cli` upstream and `devine`) hits it from flagged IPs.
+
 ## Authentication
 
 Two paths:
