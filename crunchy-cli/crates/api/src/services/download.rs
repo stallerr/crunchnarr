@@ -11,10 +11,10 @@ use std::io::Write as _;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tempfile::NamedTempFile;
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, Semaphore};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 /// Keys that callers may override on a per-request basis via `POST /downloads`'s
@@ -183,9 +183,22 @@ struct DownloadHandle {
     _task: JoinHandle<()>,
 }
 
+/// Per-user concurrency gate. Sized from the user's `simultaneous_downloads`
+/// setting. When the setting changes at the start of a new `start_download`
+/// call, the entry is replaced — in-flight tasks keep a clone of the old
+/// `Arc<Semaphore>` and finish under the previous cap, new tasks acquire
+/// against the resized one.
+struct SemaphoreEntry {
+    sem: Arc<Semaphore>,
+    size: u8,
+}
+
 /// Manages active downloads across all users.
 pub struct DownloadService {
     active_downloads: RwLock<HashMap<String, DownloadHandle>>,
+    /// Per-user `Arc<Semaphore>` cap that enforces `simultaneous_downloads`
+    /// across all tasks owned by a user. Created lazily.
+    download_semaphores: RwLock<HashMap<String, SemaphoreEntry>>,
     ws_broadcaster: Arc<WsBroadcaster>,
 }
 
@@ -318,7 +331,37 @@ impl DownloadService {
     pub fn new(ws_broadcaster: Arc<WsBroadcaster>) -> Self {
         Self {
             active_downloads: RwLock::new(HashMap::new()),
+            download_semaphores: RwLock::new(HashMap::new()),
             ws_broadcaster,
+        }
+    }
+
+    /// Return an `Arc<Semaphore>` sized to the caller's current
+    /// `simultaneous_downloads` setting. If the user already has a semaphore
+    /// at the same size, it is reused — so successive tasks queue against the
+    /// same gate. If the setting changed, the entry is replaced and any
+    /// in-flight tasks finish under their cloned reference to the old gate.
+    async fn get_or_create_semaphore(&self, user_id: &str, max: u8) -> Arc<Semaphore> {
+        let max = max.max(1);
+        {
+            let map = self.download_semaphores.read().await;
+            if let Some(entry) = map.get(user_id) {
+                if entry.size == max {
+                    return entry.sem.clone();
+                }
+            }
+        }
+        let mut map = self.download_semaphores.write().await;
+        match map.get(user_id) {
+            Some(entry) if entry.size == max => entry.sem.clone(),
+            _ => {
+                let sem = Arc::new(Semaphore::new(max as usize));
+                map.insert(
+                    user_id.to_string(),
+                    SemaphoreEntry { sem: sem.clone(), size: max },
+                );
+                sem
+            }
         }
     }
 
@@ -414,6 +457,13 @@ impl DownloadService {
         )?;
         let sink = storage_cfg.build_sink().await?;
 
+        // Per-user concurrency gate. Sized from the just-merged user setting.
+        // If the user changes `simultaneous_downloads` between calls, the
+        // helper recreates the semaphore — old tasks finish on the old one.
+        let user_sem = self
+            .get_or_create_semaphore(user_id, cfg.downloads.simultaneous)
+            .await;
+
         let config = Arc::new(tokio::sync::RwLock::new(cfg));
 
         let now = Utc::now().to_rfc3339();
@@ -440,7 +490,7 @@ impl DownloadService {
 
             sqlx::query(
                 "INSERT INTO downloads (id, user_id, episode_id, source_url, series_title, episode_title, season_number, episode_number, status, thumbnail_url, tracked_series_id, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)"
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)"
             )
             .bind(&download_id)
             .bind(user_id)
@@ -472,6 +522,7 @@ impl DownloadService {
             let uid = user_id.to_string();
             let sink_clone = sink.clone();
             let task_superseded_id = superseded_download_id.clone();
+            let sem_clone = user_sem.clone();
 
             let widevine_client_tmp = materialize_widevine_blob(
                 settings_value.as_ref(),
@@ -494,6 +545,47 @@ impl DownloadService {
             let task = tokio::spawn(async move {
                 let _widevine_client_tmp = widevine_client_tmp;
                 let _widevine_private_key_tmp = widevine_private_key_tmp;
+
+                // Wait for our turn under the per-user concurrency cap. The
+                // permit is held for the lifetime of the task and dropped
+                // automatically on completion, failure, or cancel.
+                let _permit = match sem_clone.acquire_owned().await {
+                    Ok(p) => p,
+                    Err(_) => {
+                        warn!("Download {} aborted: user semaphore closed", dl_id);
+                        let _ = sqlx::query(
+                            "UPDATE downloads SET status = 'failed', error = 'concurrency gate closed', updated_at = ? WHERE id = ?"
+                        )
+                        .bind(Utc::now().to_rfc3339())
+                        .bind(&dl_id)
+                        .execute(&db_clone)
+                        .await;
+                        return;
+                    }
+                };
+
+                // Cancellation can land while we were queued under the
+                // semaphore. Honour it before doing any CR-side work.
+                if cancel_clone.is_cancelled() {
+                    let _ = sqlx::query(
+                        "UPDATE downloads SET status = 'cancelled', updated_at = ? WHERE id = ?"
+                    )
+                    .bind(Utc::now().to_rfc3339())
+                    .bind(&dl_id)
+                    .execute(&db_clone)
+                    .await;
+                    return;
+                }
+
+                // We got the permit — flip pending → active.
+                let _ = sqlx::query(
+                    "UPDATE downloads SET status = 'active', updated_at = ? WHERE id = ?"
+                )
+                .bind(Utc::now().to_rfc3339())
+                .bind(&dl_id)
+                .execute(&db_clone)
+                .await;
+
                 let manager = DownloadManager::with_reporter_and_sink(
                     client_clone,
                     request_config,
