@@ -17,7 +17,7 @@ services:
       - API_URL=http://localhost:8080
     volumes:
       - api-data:/data
-      - ./downloads:/downloads
+      - ${DOWNLOADS_DIR:-./downloads}:/downloads
       - ${WIDEVINE_DIR:?WIDEVINE_DIR is required}:/widevine:ro
     restart: unless-stopped
 

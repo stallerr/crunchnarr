@@ -49,7 +49,7 @@ services:
       - API_URL=http://localhost:8080
     volumes:
       - api-data:/data
-      - ./downloads:/downloads
+      - ${DOWNLOADS_DIR:-./downloads}:/downloads
       - ${WIDEVINE_DIR}:/widevine:ro
 
 volumes:
@@ -60,7 +60,7 @@ Generate `JWT_SECRET` (`openssl rand -base64 32`) and `STORAGE_SECRET_KEY` (`ope
 
 ### NAS-friendly
 
-If your downloads volume (mounted at `/downloads` in the container) lives on a SMB/NFS share, the publish step falls back from `rename(2)` to a byte-stream copy when `EXDEV` (cross-filesystem) trips. No metadata preservation — pure bytes.
+If your `DOWNLOADS_DIR` is a mounted SMB/NFS share, the publish step falls back from `rename(2)` to a byte-stream copy when `EXDEV` (cross-filesystem) trips. No metadata preservation — pure bytes.
 
 ### Honest disclaimer
 
