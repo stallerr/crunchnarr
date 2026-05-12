@@ -25,6 +25,11 @@ export type AppConfig = {
   output_dir: string;
   cache_retention_days: number;
   concurrent_key_acquisitions: number;
+  /** Default behaviour when a user clicks Download for an episode that
+   *  already has a completed row in the DB or a file at the templated
+   *  output path. `replace` makes every trigger force a re-download;
+   *  the per-request `force=true` flag still overrides either way. */
+  on_existing_download: 'skip' | 'replace';
   proxy_enabled: boolean;
   proxy_url: string;
   widevine_client: string;

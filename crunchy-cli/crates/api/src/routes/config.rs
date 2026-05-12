@@ -42,6 +42,7 @@ fn default_config() -> serde_json::Value {
         "output_dir": config.downloads.output_dir.display().to_string(),
         "cache_retention_days": 7,
         "concurrent_key_acquisitions": 2,
+        "on_existing_download": "skip",
         "proxy_enabled": false,
         "proxy_url": "",
         "widevine_client": config.tools.widevine_client.as_ref().map(|p| p.display().to_string()).unwrap_or_default(),

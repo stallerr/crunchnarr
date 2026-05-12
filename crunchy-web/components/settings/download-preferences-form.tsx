@@ -43,6 +43,9 @@ export function DownloadPreferencesForm({ config, onSaved }: Props) {
       : ''
   );
   const [retryCount, setRetryCount] = useState(config.retry_count ?? 3);
+  const [onExisting, setOnExisting] = useState<'skip' | 'replace'>(
+    config.on_existing_download ?? 'skip'
+  );
   const { execute, isLoading } = useUpdateConfig();
 
   const handleSave = async () => {
@@ -52,6 +55,7 @@ export function DownloadPreferencesForm({ config, onSaved }: Props) {
       parallel_segments: parallelSegments,
       max_speed_kbps: maxSpeed.trim() ? Math.max(0, parseInt(maxSpeed)) : null,
       retry_count: retryCount,
+      on_existing_download: onExisting,
     });
     if (!error) onSaved();
   };
@@ -151,6 +155,39 @@ export function DownloadPreferencesForm({ config, onSaved }: Props) {
             <FieldDescription>Retries on failed segment downloads (0-10)</FieldDescription>
           </Field>
         </div>
+
+        <Field>
+          <FieldLabel>When a download already exists</FieldLabel>
+          <RadioGroup
+            value={onExisting}
+            onValueChange={(v) => setOnExisting(v as 'skip' | 'replace')}
+            className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full"
+          >
+            <label className="flex items-center gap-2.5 rounded-xl border border-border bg-secondary/40 px-3 py-2.5 cursor-pointer transition-colors hover:bg-secondary/70 has-data-checked:border-primary has-data-checked:bg-primary/8">
+              <Radio value="skip" />
+              <div>
+                <span className="text-sm font-semibold">Skip</span>
+                <p className="text-xs text-muted-foreground">
+                  Don't re-download. Toast offers a one-off override.
+                </p>
+              </div>
+            </label>
+            <label className="flex items-center gap-2.5 rounded-xl border border-border bg-secondary/40 px-3 py-2.5 cursor-pointer transition-colors hover:bg-secondary/70 has-data-checked:border-primary has-data-checked:bg-primary/8">
+              <Radio value="replace" />
+              <div>
+                <span className="text-sm font-semibold">Re-download</span>
+                <p className="text-xs text-muted-foreground">
+                  Always overwrite. The prior row is marked superseded.
+                </p>
+              </div>
+            </label>
+          </RadioGroup>
+          <FieldDescription>
+            Applies to manual triggers. Watchlist upgrades ignore this — they
+            always re-download when a missing audio/sub track becomes
+            available.
+          </FieldDescription>
+        </Field>
 
         <div className="flex justify-end">
           <Button onClick={handleSave} disabled={isLoading}>

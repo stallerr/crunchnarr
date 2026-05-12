@@ -428,12 +428,16 @@ pub struct StartDownloadParams {
     pub options_json: serde_json::Value,
     pub tracked_series_id: Option<String>,
     pub superseded_download_id: Option<String>,
-    /// When true, skip both the DB-existence and filesystem-existence guards
-    /// and run the pipeline anyway. Existing completed rows are marked
-    /// `superseded = 1`; existing on-disk files are overwritten at publish
-    /// time. Watchlist upgrades (`superseded_download_id = Some(_)`) imply
-    /// `force = true` implicitly.
-    pub force: bool,
+    /// Per-request override for the existence-guard behaviour.
+    ///
+    /// - `Some(true)`: skip both guards, mark prior row superseded, overwrite on disk.
+    /// - `Some(false)`: run both guards (skip on hit), regardless of user setting.
+    /// - `None`: fall back to the user's `on_existing_download` setting in
+    ///   `user_settings.settings_json` (default `"skip"`).
+    ///
+    /// Watchlist upgrades (`superseded_download_id = Some(_)`) always set
+    /// this to `Some(true)`.
+    pub force: Option<bool>,
 }
 
 impl DownloadService {
@@ -483,10 +487,9 @@ impl DownloadService {
         options_json: serde_json::Value,
         db: &SqlitePool,
     ) -> Result<Vec<EpisodeOutcome>, ApiError> {
-        let force = options_json
-            .get("force")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
+        // None when the caller didn't pass `options.force` — start_download_inner
+        // will then fall back to the user's on_existing_download setting.
+        let force = options_json.get("force").and_then(|v| v.as_bool());
         self.start_download_inner(
             user_id,
             url,
@@ -509,7 +512,9 @@ impl DownloadService {
         db: &SqlitePool,
     ) -> Result<Vec<EpisodeOutcome>, ApiError> {
         let url = format!("https://www.crunchyroll.com/watch/{}", episode_id);
-        let force = superseded_download_id.is_some();
+        // Tracking always knows whether it wants to bypass the guards; never
+        // fall through to the user's on_existing_download setting.
+        let force = Some(superseded_download_id.is_some());
         self.start_download_inner(
             user_id,
             &url,
@@ -537,7 +542,7 @@ impl DownloadService {
             options_json,
             tracked_series_id,
             superseded_download_id,
-            force,
+            force: force_override,
         } = params;
         // Get user's CR client
         let cr_service = crate::services::crunchyroll::CrunchyrollService::new(db.clone());
@@ -572,6 +577,18 @@ impl DownloadService {
         if filtered_overrides.is_object() {
             apply_overrides_to_config(&mut cfg, &filtered_overrides);
         }
+
+        // Resolve effective `force`. Per-request `options.force` wins when
+        // present; otherwise consult the user's `on_existing_download`
+        // setting (default `"skip"` = force off).
+        let force = force_override.unwrap_or_else(|| {
+            settings_value
+                .as_ref()
+                .and_then(|s| s.get("on_existing_download"))
+                .and_then(|v| v.as_str())
+                .map(|s| s == "replace")
+                .unwrap_or(false)
+        });
 
         let storage_cfg = crate::services::storage_config::StorageConfig::from_settings(
             settings_value.as_ref().unwrap_or(&serde_json::Value::Null),
