@@ -51,15 +51,11 @@ impl StorageConfig {
                 .and_then(|v| v.as_str())
                 .unwrap_or("local");
             match kind {
-                "local" => {
-                    let dir = storage
-                        .get("output_dir")
-                        .and_then(|v| v.as_str())
-                        .filter(|s| !s.is_empty())
-                        .map(PathBuf::from)
-                        .unwrap_or(fallback_dir);
-                    Ok(Self::Local { dir })
-                }
+                // For the local sink there's only one "where files land"
+                // knob: the top-level `output_dir` field (passed in as
+                // `fallback_dir`). Any `storage.output_dir` in a legacy
+                // user_settings payload is ignored.
+                "local" => Ok(Self::Local { dir: fallback_dir }),
                 "s3" => Ok(Self::S3 {
                     bucket: storage
                         .get("bucket")

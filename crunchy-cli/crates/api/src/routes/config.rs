@@ -49,7 +49,6 @@ fn default_config() -> serde_json::Value {
         "widevine_private_key": config.tools.widevine_private_key.as_ref().map(|p| p.display().to_string()).unwrap_or_default(),
         "storage": {
             "kind": "local",
-            "output_dir": config.downloads.output_dir.display().to_string(),
             "bucket": "",
             "region": "",
             "endpoint": "",

@@ -42,7 +42,6 @@ export type AppConfig = {
 
 export type StorageConfig = {
   kind: 'local' | 's3';
-  output_dir: string;
   bucket: string;
   region: string;
   endpoint: string;

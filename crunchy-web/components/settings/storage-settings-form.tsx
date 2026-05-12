@@ -23,7 +23,6 @@ type Props = {
 
 const DEFAULTS: StorageConfig = {
   kind: 'local',
-  output_dir: '',
   bucket: '',
   region: '',
   endpoint: '',
@@ -75,15 +74,9 @@ export function StorageSettingsForm({ config, onSaved }: Props) {
         </Field>
 
         {storage.kind === 'local' ? (
-          <Field>
-            <FieldLabel>Output Directory</FieldLabel>
-            <Input
-              value={storage.output_dir}
-              onChange={(e) => update('output_dir', (e.target as HTMLInputElement).value)}
-              placeholder="/Users/me/Movies/Crunchyroll"
-            />
-            <FieldDescription>Absolute path where the muxed file is moved.</FieldDescription>
-          </Field>
+          <FieldDescription>
+            Local files land at the <strong>Output Directory</strong> configured in <em>Muxing Options</em>.
+          </FieldDescription>
         ) : (
           <>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
