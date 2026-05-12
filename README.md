@@ -71,7 +71,7 @@ services:
       - API_URL=http://localhost:8080
     volumes:
       - api-data:/data
-      - ${DOWNLOADS_DIR:-./downloads}:/downloads
+      - ./downloads:/downloads
       - ${WIDEVINE_DIR:?}:/widevine:ro
     restart: unless-stopped
 
@@ -90,7 +90,8 @@ Open `http://localhost:3000`. Register an account, link your Crunchyroll account
 | `JWT_SECRET` | Signing secret for auth tokens. Stable across restarts or all sessions invalidate. `openssl rand -base64 32`. |
 | `STORAGE_SECRET_KEY` | 32-byte AES-256-GCM key used to encrypt Widevine blobs / S3 secrets at rest in SQLite. **Keep this stable** — losing it means the encrypted blobs can't be recovered. `openssl rand -hex 32`. |
 | `WIDEVINE_DIR` | Host path holding your CDM files (mounted read-only into the container at `/widevine`). |
-| `DOWNLOADS_DIR` | Host path that docker-compose mounts to `/downloads` inside the container. Not read by the API server itself — the per-user output directory is set in **Settings → Downloads** in the web UI and should point at `/downloads` (the in-container path). Defaults to `./downloads` if unset. |
+
+The downloads volume is bound from `./downloads` (relative to the compose file) to `/downloads` inside the container. Edit the volume line in `docker-compose.yml` if you want it on a NAS / external disk. The per-user output directory in the web UI (**Settings → Downloads**) should stay set to `/downloads` (the in-container path).
 
 Optional:
 
@@ -103,7 +104,7 @@ Optional:
 
 ### NAS / cross-filesystem note
 
-If `DOWNLOADS_DIR` (the host path mounted at `/downloads`) lives on a separate filesystem (NFS / SMB share, mounted volume), Crunchnarr falls back from `rename(2)` to a byte-stream copy. You don't need to do anything; it Just Works.
+If the host path you bind to `/downloads` lives on a separate filesystem (NFS / SMB share, mounted volume), Crunchnarr falls back from `rename(2)` to a byte-stream copy. You don't need to do anything; it Just Works.
 
 ### Networking
 
