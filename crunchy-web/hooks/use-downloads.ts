@@ -21,7 +21,12 @@ import {
 import { unwrap } from '@/lib/api/client';
 import { toastManager } from '@/components/ui/toast';
 import type { DownloadOptions } from '@/types/download-options';
-import type { DownloadRow, DownloadCounts } from '@/types/downloads';
+import type {
+  DownloadRow,
+  DownloadCounts,
+  DownloadResponse,
+  SkipReason,
+} from '@/types/downloads';
 
 type TabStatus = 'active' | 'completed' | 'failed' | 'cancelled' | undefined;
 
@@ -283,26 +288,58 @@ export function useStartDownload() {
   const { getToken, isAuthenticated } = useAuthToken();
   const [isLoading, setIsLoading] = useState(false);
 
+  const fire = useCallback(
+    async (episodeId: string, options: DownloadOptions, force: boolean) => {
+      const token = await getToken();
+      if (!token) return { data: null, error: 'Not authenticated' };
+      const url = `https://www.crunchyroll.com/watch/${episodeId}`;
+      return unwrap(startDownload(token, url, options, force));
+    },
+    [getToken]
+  );
+
   const execute = useCallback(
-    async (episodeId: string, options: DownloadOptions) => {
+    async (episodeId: string, options: DownloadOptions, force = false) => {
       if (!isAuthenticated) return { data: null, error: 'Not authenticated' };
 
       setIsLoading(true);
       try {
-        const token = await getToken();
-        if (!token) return { data: null, error: 'Not authenticated' };
+        const { data, error } = await fire(episodeId, options, force);
+        if (error || !data) return { data, error };
 
-        const url = `https://www.crunchyroll.com/watch/${episodeId}`;
-        const { data, error } = await unwrap(
-          startDownload(token, url, options)
-        );
-        if (data && !error) {
+        const started = data.filter((d) => d.status === 'pending');
+        const skipped = data.filter((d) => d.status === 'skipped');
+
+        if (started.length > 0 && skipped.length === 0) {
           toastManager.add({
-            title: 'Download Started',
+            title: 'Download started',
             type: 'info',
             timeout: 5000,
           });
+        } else if (started.length === 0 && skipped.length === 1) {
+          // Single-episode click on something already present. Offer to
+          // re-download via force=true.
+          toastManager.add({
+            title: skipTitle(skipped[0].skip_reason),
+            description: skipDescription(skipped[0]),
+            type: 'info',
+            timeout: 8000,
+            actionProps: {
+              children: 'Re-download',
+              onClick: () => {
+                void execute(episodeId, options, true);
+              },
+            },
+          });
+        } else {
+          toastManager.add({
+            title: `Download started`,
+            description: `${started.length} new, ${skipped.length} skipped`,
+            type: 'info',
+            timeout: 6000,
+          });
         }
+
         return { data, error };
       } catch {
         return { data: null, error: 'An unexpected error occurred' };
@@ -310,10 +347,29 @@ export function useStartDownload() {
         setIsLoading(false);
       }
     },
-    [getToken, isAuthenticated]
+    [isAuthenticated, fire]
   );
 
   return { execute, isLoading };
+}
+
+function skipTitle(reason?: SkipReason): string {
+  switch (reason) {
+    case 'in_progress':
+      return 'Already downloading';
+    case 'file_exists':
+      return 'Already on disk';
+    case 'already_downloaded':
+    default:
+      return 'Already downloaded';
+  }
+}
+
+function skipDescription(entry: DownloadResponse): string | undefined {
+  if (entry.skip_reason === 'file_exists' && entry.existing_path) {
+    return entry.existing_path;
+  }
+  return undefined;
 }
 
 export function useDownloadActions() {

@@ -26,11 +26,21 @@ export type DownloadRow = {
   updated_at: string;
 };
 
+/** Why a `POST /downloads` entry was skipped. */
+export type SkipReason = 'already_downloaded' | 'in_progress' | 'file_exists';
+
 export type DownloadResponse = {
-  id: string;
-  status: DownloadStatus;
+  /** New `downloads.id` when started, or the prior row's UUID when skipped
+   *  because a DB row exists. Null when skipped purely because the file
+   *  exists at the templated output path (no DB row was created). */
+  id: string | null;
+  /** `"pending"` for a newly-queued download, `"skipped"` otherwise. */
+  status: 'pending' | 'skipped';
   episode_id: string;
   episode_title: string;
+  skip_reason?: SkipReason;
+  existing_download_id?: string;
+  existing_path?: string;
 };
 
 export type PaginatedDownloads = {

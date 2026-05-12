@@ -22,45 +22,80 @@ export function DownloadSeriesButton({
   const { getToken, isAuthenticated } = useAuthToken();
   const [isLoading, setIsLoading] = useState(false);
 
-  const handleDownload = useCallback(async () => {
-    if (!isAuthenticated) return;
+  const handleDownload = useCallback(
+    async (force = false) => {
+      if (!isAuthenticated) return;
 
-    setIsLoading(true);
-    try {
-      const token = await getToken();
-      if (!token) return;
+      setIsLoading(true);
+      try {
+        const token = await getToken();
+        if (!token) return;
 
-      const url = `https://www.crunchyroll.com/series/${seriesId}`;
-      const { data, error } = await unwrap(
-        startDownload(token, url, DEFAULT_DOWNLOAD_OPTIONS)
-      );
+        const url = `https://www.crunchyroll.com/series/${seriesId}`;
+        const { data, error } = await unwrap(
+          startDownload(token, url, DEFAULT_DOWNLOAD_OPTIONS, force)
+        );
 
-      if (error) {
+        if (error || !data) {
+          toastManager.add({
+            type: 'error',
+            title: 'Download failed',
+            description: error ?? 'An unexpected error occurred',
+          });
+          return;
+        }
+
+        const started = data.filter((d) => d.status === 'pending').length;
+        const skipped = data.filter((d) => d.status === 'skipped').length;
+
+        if (started > 0 && skipped === 0) {
+          toastManager.add({
+            type: 'success',
+            title: 'Season download started',
+            description: `${started} episode${started !== 1 ? 's' : ''} queued`,
+          });
+        } else if (started === 0 && skipped > 0) {
+          toastManager.add({
+            type: 'info',
+            title: 'Nothing to download',
+            description: `${skipped} episode${skipped !== 1 ? 's' : ''} already downloaded`,
+            timeout: 8000,
+            actionProps: {
+              children: 'Re-download all',
+              onClick: () => {
+                void handleDownload(true);
+              },
+            },
+          });
+        } else {
+          toastManager.add({
+            type: 'success',
+            title: 'Season download started',
+            description: `${started} new, ${skipped} skipped (already downloaded)`,
+            timeout: 8000,
+            actionProps: {
+              children: 'Re-download all',
+              onClick: () => {
+                void handleDownload(true);
+              },
+            },
+          });
+        }
+      } catch {
         toastManager.add({
           type: 'error',
           title: 'Download failed',
-          description: error,
+          description: 'An unexpected error occurred',
         });
-      } else if (data) {
-        toastManager.add({
-          type: 'success',
-          title: 'Season download started',
-          description: `${data.length} episode${data.length !== 1 ? 's' : ''} started`,
-        });
+      } finally {
+        setIsLoading(false);
       }
-    } catch {
-      toastManager.add({
-        type: 'error',
-        title: 'Download failed',
-        description: 'An unexpected error occurred',
-      });
-    } finally {
-      setIsLoading(false);
-    }
-  }, [getToken, isAuthenticated, seriesId]);
+    },
+    [getToken, isAuthenticated, seriesId]
+  );
 
   return (
-    <Button variant="outline" size="sm" onClick={handleDownload} disabled={isLoading}>
+    <Button variant="outline" size="sm" onClick={() => void handleDownload()} disabled={isLoading}>
       {isLoading ? (
         <LoaderCircleIcon className="animate-spin" />
       ) : (

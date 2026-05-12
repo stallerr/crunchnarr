@@ -53,11 +53,22 @@ export const unmarkManual = (token: string, episode_id: string) =>
 export const getDownload = (token: string, id: string) =>
   get<DownloadRow>(token, `/downloads/${id}`);
 
+/**
+ * Kick off a download for `url`. When `force` is true, the API bypasses the
+ * DB and filesystem existence guards — any prior `completed` row for the
+ * episode is marked `superseded` and the on-disk file is overwritten at
+ * publish time.
+ */
 export const startDownload = (
   token: string,
   url: string,
-  options: DownloadOptions
-) => post<DownloadResponse[]>(token, '/downloads', { url, options });
+  options: DownloadOptions,
+  force = false,
+) =>
+  post<DownloadResponse[]>(token, '/downloads', {
+    url,
+    options: force ? { ...options, force: true } : options,
+  });
 
 export const cancelDownload = (token: string, id: string) =>
   del<{ status: string }>(token, `/downloads/${id}`);
