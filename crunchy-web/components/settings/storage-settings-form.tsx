@@ -74,9 +74,9 @@ export function StorageSettingsForm({ config, onSaved }: Props) {
         </Field>
 
         {storage.kind === 'local' ? (
-          <FieldDescription>
+          <p className="text-muted-foreground text-xs">
             Local files land at the <strong>Output Directory</strong> configured in <em>Muxing Options</em>.
-          </FieldDescription>
+          </p>
         ) : (
           <>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
