@@ -3,7 +3,10 @@
 use crate::error::ApiError;
 use crate::services::ws::WsBroadcaster;
 use chrono::Utc;
+use crunchy_cli::api::types::CREpisode;
+use crunchy_cli::config::Config;
 use crunchy_cli::download::{DownloadManager, DownloadResult, ProgressReporter, StepProgress};
+use crunchy_cli::media::{FilenameGenerator, FilenameVars};
 use serde::Serialize;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
@@ -176,6 +179,106 @@ fn materialize_widevine_blob(
     Ok(Some(tmp))
 }
 
+/// Per-episode result returned from `start_download_inner`. Either the
+/// download was newly kicked off (`status = "pending"`), or it was skipped
+/// because a previous completed/in-flight row exists or because the muxed
+/// file is already on disk at the templated output path.
+#[derive(Debug, Clone)]
+pub struct EpisodeOutcome {
+    pub episode_id: String,
+    pub episode_title: String,
+    pub download_id: Option<String>,
+    pub status: &'static str,
+    pub skip_reason: Option<&'static str>,
+    pub existing_download_id: Option<String>,
+    pub existing_path: Option<String>,
+}
+
+impl EpisodeOutcome {
+    fn started(download_id: String, episode_id: String, title: String) -> Self {
+        Self {
+            episode_id,
+            episode_title: title,
+            download_id: Some(download_id),
+            status: "pending",
+            skip_reason: None,
+            existing_download_id: None,
+            existing_path: None,
+        }
+    }
+
+    fn skipped(
+        episode_id: String,
+        title: String,
+        reason: &'static str,
+        existing_download_id: Option<String>,
+        existing_path: Option<String>,
+    ) -> Self {
+        Self {
+            episode_id,
+            episode_title: title,
+            download_id: None,
+            status: "skipped",
+            skip_reason: Some(reason),
+            existing_download_id,
+            existing_path,
+        }
+    }
+}
+
+/// Compute the output path the publish step would write to, *without* doing
+/// any CR-side work. Returns `None` when the user's filename template includes
+/// runtime-resolved vars (`{quality}`, `{audio}`, `{year}`) that we'd need a
+/// streaming-token-priced playback call to know — in that case the pre-check
+/// can't run and the in-pipeline `skip_existing` (inside `DownloadManager`)
+/// is the only safety net.
+fn precomputed_output_path(cfg: &Config, episode: &CREpisode) -> Option<PathBuf> {
+    let template = &cfg.muxing.filename_template;
+    if template.contains("{quality}")
+        || template.contains("{audio}")
+        || template.contains("{year}")
+    {
+        return None;
+    }
+    let season = if episode.season_sequence_number > 0 {
+        episode.season_sequence_number
+    } else {
+        episode.season_number
+    };
+    let vars = FilenameVars {
+        series: episode.series_title.clone(),
+        season,
+        season_title: episode.season_title.clone(),
+        episode: episode.episode.clone(),
+        episode_number: episode.episode_number,
+        title: episode.title.clone(),
+        quality: String::new(),
+        audio: String::new(),
+        year: String::new(),
+    };
+    let gen = FilenameGenerator::new(template, cfg.downloads.output_dir.clone());
+    Some(gen.generate(&vars, &cfg.muxing.format))
+}
+
+/// Latest non-superseded `downloads` row for this `user_id` × `episode_id`,
+/// if any. Used as the DB-side existence check at download-trigger time.
+async fn latest_existing_download(
+    db: &SqlitePool,
+    user_id: &str,
+    episode_id: &str,
+) -> Result<Option<(String, String)>, ApiError> {
+    let row: Option<(String, String)> = sqlx::query_as(
+        "SELECT id, status FROM downloads \
+         WHERE user_id = ? AND episode_id = ? AND superseded = 0 \
+         ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(user_id)
+    .bind(episode_id)
+    .fetch_optional(db)
+    .await?;
+    Ok(row)
+}
+
 /// Handle to an active download task.
 struct DownloadHandle {
     user_id: String,
@@ -325,6 +428,12 @@ pub struct StartDownloadParams {
     pub options_json: serde_json::Value,
     pub tracked_series_id: Option<String>,
     pub superseded_download_id: Option<String>,
+    /// When true, skip both the DB-existence and filesystem-existence guards
+    /// and run the pipeline anyway. Existing completed rows are marked
+    /// `superseded = 1`; existing on-disk files are overwritten at publish
+    /// time. Watchlist upgrades (`superseded_download_id = Some(_)`) imply
+    /// `force = true` implicitly.
+    pub force: bool,
 }
 
 impl DownloadService {
@@ -373,11 +482,15 @@ impl DownloadService {
         url: &str,
         options_json: serde_json::Value,
         db: &SqlitePool,
-    ) -> Result<Vec<(String, String, String)>, ApiError> {
+    ) -> Result<Vec<EpisodeOutcome>, ApiError> {
+        let force = options_json
+            .get("force")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         self.start_download_inner(
             user_id,
             url,
-            StartDownloadParams { options_json, ..Default::default() },
+            StartDownloadParams { options_json, force, ..Default::default() },
             db,
         )
         .await
@@ -385,7 +498,8 @@ impl DownloadService {
 
     /// Used by `TrackingService` — same as `start_download` but with watchlist
     /// metadata wired in. Always uses saved settings (no per-request overrides
-    /// exposed to the polling worker).
+    /// exposed to the polling worker). Upgrades (`superseded_download_id` set)
+    /// imply `force = true`.
     pub async fn start_tracking_download(
         &self,
         user_id: &str,
@@ -393,14 +507,16 @@ impl DownloadService {
         tracked_series_id: &str,
         superseded_download_id: Option<String>,
         db: &SqlitePool,
-    ) -> Result<Vec<(String, String, String)>, ApiError> {
+    ) -> Result<Vec<EpisodeOutcome>, ApiError> {
         let url = format!("https://www.crunchyroll.com/watch/{}", episode_id);
+        let force = superseded_download_id.is_some();
         self.start_download_inner(
             user_id,
             &url,
             StartDownloadParams {
                 tracked_series_id: Some(tracked_series_id.to_string()),
                 superseded_download_id,
+                force,
                 ..Default::default()
             },
             db,
@@ -408,15 +524,21 @@ impl DownloadService {
         .await
     }
 
-    /// Shared implementation. Returns (download_id, episode_id, title) for each episode.
+    /// Shared implementation. Returns one `EpisodeOutcome` per resolved
+    /// episode — either started (with a new `download_id`) or skipped.
     async fn start_download_inner(
         &self,
         user_id: &str,
         url: &str,
         params: StartDownloadParams,
         db: &SqlitePool,
-    ) -> Result<Vec<(String, String, String)>, ApiError> {
-        let StartDownloadParams { options_json, tracked_series_id, superseded_download_id } = params;
+    ) -> Result<Vec<EpisodeOutcome>, ApiError> {
+        let StartDownloadParams {
+            options_json,
+            tracked_series_id,
+            superseded_download_id,
+            force,
+        } = params;
         // Get user's CR client
         let cr_service = crate::services::crunchyroll::CrunchyrollService::new(db.clone());
         let client = cr_service.get_client(user_id).await?;
@@ -470,6 +592,70 @@ impl DownloadService {
         let mut results = Vec::new();
 
         for episode in &episodes {
+            // Pre-trigger guards. Skip both the DB and FS check when force is
+            // set or when the watchlist is doing an upgrade (superseded_id
+            // implies the caller already decided to re-download).
+            if !force {
+                // DB existence: completed → 'already_downloaded'; active/pending
+                // → 'in_progress'; failed/cancelled/paused → allow retry.
+                if let Some((existing_id, existing_status)) =
+                    latest_existing_download(db, user_id, &episode.id).await?
+                {
+                    let reason = match existing_status.as_str() {
+                        "completed" => Some("already_downloaded"),
+                        "active" | "pending" => Some("in_progress"),
+                        _ => None,
+                    };
+                    if let Some(reason) = reason {
+                        results.push(EpisodeOutcome::skipped(
+                            episode.id.clone(),
+                            episode.title.clone(),
+                            reason,
+                            Some(existing_id),
+                            None,
+                        ));
+                        continue;
+                    }
+                }
+
+                // Filesystem existence: only when the template has no
+                // runtime-resolved vars (otherwise we'd need a streaming-token
+                // -priced playback call to know the final path; the in-pipeline
+                // skip_existing inside DownloadManager handles those).
+                let pre_path = {
+                    let cfg_read = config.read().await;
+                    precomputed_output_path(&cfg_read, episode)
+                };
+                if let Some(path) = pre_path {
+                    if tokio::fs::try_exists(&path).await.unwrap_or(false) {
+                        results.push(EpisodeOutcome::skipped(
+                            episode.id.clone(),
+                            episode.title.clone(),
+                            "file_exists",
+                            None,
+                            Some(path.to_string_lossy().into_owned()),
+                        ));
+                        continue;
+                    }
+                }
+            } else if superseded_download_id.is_none() {
+                // User-initiated force re-download: mark the prior
+                // non-superseded row (if any) as superseded so the UI hides
+                // it once the new one starts. Watchlist upgrades manage
+                // supersession themselves via `superseded_download_id`.
+                if let Some((existing_id, _)) =
+                    latest_existing_download(db, user_id, &episode.id).await?
+                {
+                    let _ = sqlx::query(
+                        "UPDATE downloads SET superseded = 1, updated_at = ? WHERE id = ?",
+                    )
+                    .bind(&now)
+                    .bind(&existing_id)
+                    .execute(db)
+                    .await;
+                }
+            }
+
             let download_id = Uuid::new_v4().to_string();
             let season_num = if episode.season_sequence_number > 0 {
                 episode.season_sequence_number
@@ -694,7 +880,11 @@ impl DownloadService {
                 );
             }
 
-            results.push((download_id, episode.id.clone(), episode.title.clone()));
+            results.push(EpisodeOutcome::started(
+                download_id,
+                episode.id.clone(),
+                episode.title.clone(),
+            ));
         }
 
         Ok(results)

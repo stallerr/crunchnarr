@@ -43,10 +43,26 @@ pub struct StartDownloadRequest {
 
 #[derive(Serialize, ToSchema)]
 pub struct DownloadResponse {
-    id: String,
+    /// New download UUID when started, or the prior row's UUID when skipped
+    /// because the DB already had an entry for this episode. None when
+    /// skipped purely because the file existed at the templated output path.
+    id: Option<String>,
+    /// "pending" for a newly-queued download, "skipped" otherwise.
     status: String,
     episode_id: String,
     episode_title: Option<String>,
+    /// Set when `status == "skipped"`. One of `"already_downloaded"`,
+    /// `"in_progress"`, or `"file_exists"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    skip_reason: Option<String>,
+    /// The UUID of the prior `downloads` row that triggered the skip, if
+    /// any. Always None for `skip_reason == "file_exists"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    existing_download_id: Option<String>,
+    /// The on-disk path that already exists. Set only when
+    /// `skip_reason == "file_exists"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    existing_path: Option<String>,
 }
 
 #[derive(Deserialize, IntoParams, ToSchema)]
@@ -101,19 +117,22 @@ async fn start_download(
     auth: AuthUser,
     Json(req): Json<StartDownloadRequest>,
 ) -> Result<Json<Vec<DownloadResponse>>, ApiError> {
-    let downloads = state
+    let outcomes = state
         .download_service
         .start_download(&auth.user_id, &req.url, req.options, &state.db)
         .await?;
 
     Ok(Json(
-        downloads
+        outcomes
             .into_iter()
-            .map(|(id, episode_id, title)| DownloadResponse {
-                id,
-                status: "active".to_string(),
-                episode_id,
-                episode_title: Some(title),
+            .map(|o| DownloadResponse {
+                id: o.download_id,
+                status: o.status.to_string(),
+                episode_id: o.episode_id,
+                episode_title: Some(o.episode_title),
+                skip_reason: o.skip_reason.map(String::from),
+                existing_download_id: o.existing_download_id,
+                existing_path: o.existing_path,
             })
             .collect(),
     ))
