@@ -14,7 +14,6 @@ services:
       - ACCESS_TOKEN_TTL=${ACCESS_TOKEN_TTL:-3600}
       - REFRESH_TOKEN_TTL=${REFRESH_TOKEN_TTL:-2592000}
       - TRACKING_INTERVAL_SECS=${TRACKING_INTERVAL_SECS:-3600}
-      - DOWNLOADS_DIR=/downloads
       - API_URL=http://localhost:8080
     volumes:
       - api-data:/data

@@ -1,7 +1,5 @@
 //! Server configuration.
 
-use std::path::PathBuf;
-
 /// Configuration for the API server.
 #[derive(Debug, Clone)]
 pub struct ServerConfig {
@@ -17,8 +15,6 @@ pub struct ServerConfig {
     pub access_token_ttl: u64,
     /// Refresh token TTL in seconds (default: 30 days).
     pub refresh_token_ttl: u64,
-    /// Downloads output directory.
-    pub downloads_dir: PathBuf,
     /// Watchlist polling interval in seconds (default: 1 hour).
     pub tracking_interval_secs: u64,
     /// Crunchyroll API request rate cap, per linked CR account (default: 3 RPS).
@@ -42,9 +38,6 @@ impl Default for ServerConfig {
             jwt_secret: "change-me-in-production".to_string(),
             access_token_ttl: 3600,
             refresh_token_ttl: 30 * 24 * 3600,
-            downloads_dir: dirs::download_dir()
-                .unwrap_or_else(|| PathBuf::from("./downloads"))
-                .join("Crunchyroll"),
             tracking_interval_secs: 3600,
             cr_rate_limit_rps: 3,
             cr_rate_limit_burst: 6,
@@ -74,9 +67,6 @@ impl ServerConfig {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(default.refresh_token_ttl),
-            downloads_dir: std::env::var("DOWNLOADS_DIR")
-                .map(PathBuf::from)
-                .unwrap_or(default.downloads_dir),
             tracking_interval_secs: std::env::var("TRACKING_INTERVAL_SECS")
                 .ok()
                 .and_then(|v| v.parse().ok())

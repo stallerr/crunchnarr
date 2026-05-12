@@ -10,6 +10,13 @@ use crate::auth::middleware::AuthUser;
 use crate::error::{ApiError, ErrorBody};
 use crate::state::AppState;
 
+/// Where the resume-cache lives on disk. Matches the write site in
+/// `crunchy_cli::download::SegmentDownloader`, which uses
+/// `cfg.get_cache_dir()` → falls back to `temp_dir` = this path.
+fn cache_root() -> std::path::PathBuf {
+    std::env::temp_dir().join("crunchy-cli")
+}
+
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/cache", get(list_caches))
@@ -35,10 +42,10 @@ pub struct CleanParams {
     tag = "Cache"
 )]
 async fn list_caches(
-    State(state): State<AppState>,
+    _state: State<AppState>,
     _auth: AuthUser,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let cache_dir = state.config.downloads_dir.join(".cache");
+    let cache_dir = cache_root();
     let caches = crunchy_cli::download::list_caches(&cache_dir)
         .await
         .map_err(|e| ApiError::Internal(format!("Failed to list caches: {}", e)))?;
@@ -78,11 +85,11 @@ async fn list_caches(
     tag = "Cache"
 )]
 async fn clean_caches(
-    State(state): State<AppState>,
+    _state: State<AppState>,
     _auth: AuthUser,
     Query(params): Query<CleanParams>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let cache_dir = state.config.downloads_dir.join(".cache");
+    let cache_dir = cache_root();
     let max_age = if params.all {
         chrono::Duration::zero()
     } else {
@@ -110,10 +117,10 @@ async fn clean_caches(
     tag = "Cache"
 )]
 async fn cache_stats(
-    State(state): State<AppState>,
+    _state: State<AppState>,
     _auth: AuthUser,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let cache_dir = state.config.downloads_dir.join(".cache");
+    let cache_dir = cache_root();
     let caches = crunchy_cli::download::list_caches(&cache_dir)
         .await
         .map_err(|e| ApiError::Internal(format!("Failed to list caches: {}", e)))?;

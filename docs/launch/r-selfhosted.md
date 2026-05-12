@@ -46,7 +46,6 @@ services:
       - DATABASE_URL=sqlite:/data/crunchy-api.db?mode=rwc
       - JWT_SECRET=${JWT_SECRET}
       - STORAGE_SECRET_KEY=${STORAGE_SECRET_KEY}
-      - DOWNLOADS_DIR=/downloads
       - API_URL=http://localhost:8080
     volumes:
       - api-data:/data
