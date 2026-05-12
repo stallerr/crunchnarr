@@ -45,6 +45,10 @@ docker run -d \
 
 UI at `http://localhost:3000`. Register an account, link your CR account in **Account → Crunchyroll**, then add a series. The mounted CDM at `/widevine` is read by the API on demand — no in-UI upload needed if it's mounted.
 
+### Disclaimer
+
+You provide the Widevine CDM. The project does not bundle one and there's no DRM-bypass path in the code beyond what your own CDM negotiates. Crunchnarr is purely an automation layer over the official streaming pipeline. Use only for content you can legitimately access on your own Crunchyroll account. CR's TOS may prohibit ripping; this is a personal-archive tool with no warranty.
+
 ### Stack
 
 Rust + Tokio + Axum on the API, Next.js 16 + Tailwind on the UI, SQLite for storage. MIT licensed.
