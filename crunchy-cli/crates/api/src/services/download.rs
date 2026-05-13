@@ -691,6 +691,14 @@ impl DownloadService {
                 })
                 .map(|img| img.source.clone());
 
+            // Store the per-episode URL, not the original request URL. A
+            // season-level POST /downloads passes a series URL which fans
+            // out across N episodes; persisting that URL would make every
+            // row's retry re-resolve the whole series. Use the canonical
+            // /watch/{episode_id} shape (same as start_tracking_download).
+            let episode_url =
+                format!("https://www.crunchyroll.com/watch/{}", episode.id);
+
             sqlx::query(
                 "INSERT INTO downloads (id, user_id, episode_id, source_url, series_title, episode_title, season_number, episode_number, status, thumbnail_url, tracked_series_id, created_at, updated_at)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)"
@@ -698,7 +706,7 @@ impl DownloadService {
             .bind(&download_id)
             .bind(user_id)
             .bind(&episode.id)
-            .bind(url)
+            .bind(&episode_url)
             .bind(&episode.series_title)
             .bind(&episode.title)
             .bind(season_num as i64)
