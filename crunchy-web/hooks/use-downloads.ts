@@ -10,6 +10,7 @@ import {
   getDownloadedEpisodeIds,
   startDownload,
   cancelDownload,
+  cancelActiveDownloads,
   pauseDownload,
   resumeDownload,
   markManual,
@@ -52,7 +53,7 @@ export function useInfiniteDownloads(status?: TabStatus) {
       const result = await getDownloads(token, {
         status,
         cursor: cursor ?? undefined,
-        limit: 20,
+        limit: 50,
       });
 
       if (!mountedRef.current) return;
@@ -119,7 +120,34 @@ export function useInfiniteDownloads(status?: TabStatus) {
   useWebSocketSubscription('download_complete', reset);
   useWebSocketSubscription('download_failed', reset);
 
-  return { items, isLoading, isLoadingMore, error, hasMore, loadMore, refetch: reset };
+  /**
+   * Mutate a single row in place — used by cancel/pause/resume so the row
+   * doesn't have to refetch the whole list and lose scroll position.
+   * When `update` returns null the row is removed; otherwise it's replaced.
+   */
+  const mutateRow = useCallback(
+    (id: string, update: (row: DownloadRow) => DownloadRow | null) => {
+      setItems((prev) =>
+        prev.flatMap((row) => {
+          if (row.id !== id) return [row];
+          const next = update(row);
+          return next ? [next] : [];
+        })
+      );
+    },
+    []
+  );
+
+  return {
+    items,
+    isLoading,
+    isLoadingMore,
+    error,
+    hasMore,
+    loadMore,
+    refetch: reset,
+    mutateRow,
+  };
 }
 
 export function useDownloadCounts() {
@@ -370,6 +398,29 @@ function skipDescription(entry: DownloadResponse): string | undefined {
     return entry.existing_path;
   }
   return undefined;
+}
+
+/**
+ * Cancel every active/pending/paused download owned by the caller in one
+ * shot. Used by the 'Cancel all active' header button on /downloads.
+ */
+export function useCancelActiveDownloads() {
+  const { getToken, isAuthenticated } = useAuthToken();
+  const [isLoading, setIsLoading] = useState(false);
+
+  const execute = useCallback(async () => {
+    if (!isAuthenticated) return { data: null, error: 'Not authenticated' };
+    setIsLoading(true);
+    try {
+      const token = await getToken();
+      if (!token) return { data: null, error: 'Not authenticated' };
+      return await unwrap(cancelActiveDownloads(token));
+    } finally {
+      setIsLoading(false);
+    }
+  }, [getToken, isAuthenticated]);
+
+  return { execute, isLoading };
 }
 
 export function useDownloadActions() {

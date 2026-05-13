@@ -22,6 +22,7 @@ pub fn router() -> Router<AppState> {
         .route("/downloads", get(list_downloads))
         .route("/downloads/counts", get(download_counts))
         .route("/downloads/episode-ids", get(downloaded_episode_ids))
+        .route("/downloads/active", delete(cancel_active))
         .route("/downloads/manual", post(mark_manual))
         .route("/downloads/manual/bulk", post(mark_manual_bulk))
         .route("/downloads/manual/{episode_id}", delete(unmark_manual))
@@ -378,6 +379,27 @@ async fn cancel_download(
         .cancel_download(&auth.user_id, &id, &state.db)
         .await?;
     Ok(Json(serde_json::json!({ "status": "cancelled" })))
+}
+
+#[utoipa::path(
+    delete,
+    path = "/downloads/active",
+    responses(
+        (status = 200, description = "All active/pending/paused downloads cancelled", body = Object),
+        (status = 401, description = "Not authenticated", body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "Downloads"
+)]
+async fn cancel_active(
+    State(state): State<AppState>,
+    auth: AuthUser,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let cancelled = state
+        .download_service
+        .cancel_active_for_user(&auth.user_id, &state.db)
+        .await?;
+    Ok(Json(serde_json::json!({ "cancelled": cancelled })))
 }
 
 #[utoipa::path(

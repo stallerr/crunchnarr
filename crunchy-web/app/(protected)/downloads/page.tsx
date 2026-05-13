@@ -1,16 +1,23 @@
 'use client';
 
 import { useState } from 'react';
-import { DownloadIcon } from 'lucide-react';
+import { DownloadIcon, BanIcon } from 'lucide-react';
 import {
   PagePanel,
   PageHeader,
   PageTitle,
   PageDescription,
 } from '@/components/layout/page';
+import { Button } from '@/components/ui/button';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { toastManager } from '@/components/ui/toast';
 import { DownloadsTable } from '@/components/downloads/downloads-table';
 import { DownloadActions } from '@/components/downloads/download-actions';
-import { useInfiniteDownloads, useDownloadCounts } from '@/hooks/use-downloads';
+import {
+  useInfiniteDownloads,
+  useDownloadCounts,
+  useCancelActiveDownloads,
+} from '@/hooks/use-downloads';
 import { cn } from '@/lib/utils';
 
 
@@ -32,16 +39,52 @@ function tabToStatus(tab: TabKey): 'active' | 'completed' | 'failed' | 'cancelle
 
 export default function DownloadsPage() {
   const [activeTab, setActiveTab] = useState<TabKey>('all');
-  const { items, isLoading, isLoadingMore, error, hasMore, loadMore, refetch } =
+  const { items, isLoading, isLoadingMore, error, hasMore, loadMore, refetch, mutateRow } =
     useInfiniteDownloads(tabToStatus(activeTab));
   const { data: counts } = useDownloadCounts();
+  const cancelAll = useCancelActiveDownloads();
+  const [confirmCancelAllOpen, setConfirmCancelAllOpen] = useState(false);
+
+  const activeCount = counts?.active ?? 0;
+
+  const handleCancelAll = async () => {
+    const { data, error } = await cancelAll.execute();
+    setConfirmCancelAllOpen(false);
+    if (error) {
+      toastManager.add({
+        type: 'error',
+        title: 'Failed to cancel',
+        description: error,
+      });
+      return;
+    }
+    toastManager.add({
+      type: 'success',
+      title: `Cancelled ${data?.cancelled ?? 0} download${(data?.cancelled ?? 0) === 1 ? '' : 's'}`,
+    });
+    refetch();
+  };
 
   return (
     <PagePanel>
       <PageHeader>
-        <div className="flex items-center gap-2">
-          <DownloadIcon className="size-6 text-primary" />
-          <PageTitle>Downloads</PageTitle>
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <DownloadIcon className="size-6 text-primary" />
+            <PageTitle>Downloads</PageTitle>
+          </div>
+          {activeCount > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setConfirmCancelAllOpen(true)}
+              disabled={cancelAll.isLoading}
+              title="Cancel every active and pending download"
+            >
+              <BanIcon className="size-4" />
+              Cancel all active ({activeCount})
+            </Button>
+          )}
         </div>
         <PageDescription>
           Manage your active and completed downloads
@@ -99,11 +142,24 @@ export default function DownloadsPage() {
           renderActions={(download) => (
             <DownloadActions
               download={download}
+              onUpdate={(id, patch) =>
+                mutateRow(id, (row) => ({ ...row, ...patch }))
+              }
               onActionComplete={refetch}
             />
           )}
         />
       )}
+
+      <ConfirmDialog
+        open={confirmCancelAllOpen}
+        onOpenChange={setConfirmCancelAllOpen}
+        title="Cancel all active downloads"
+        description={`${activeCount} download${activeCount === 1 ? ' is' : 's are'} active or pending. Cancel ${activeCount === 1 ? 'it' : 'them all'}?`}
+        confirmLabel={`Cancel ${activeCount}`}
+        variant="destructive"
+        onConfirm={handleCancelAll}
+      />
     </PagePanel>
   );
 }

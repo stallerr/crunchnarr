@@ -21,11 +21,23 @@ import type { DownloadRow } from '@/types/downloads';
 
 type DownloadActionsProps = {
   download: DownloadRow;
+  /**
+   * Called after a successful pause/resume/cancel with the new status.
+   * Parent should patch its local row state to avoid a full refetch
+   * (which would lose scroll position).
+   */
+  onUpdate?: (id: string, patch: Partial<DownloadRow>) => void;
+  /**
+   * Used when only a full refetch can pick up the change (e.g. Retry
+   * creates a new row with a new id; an in-place patch can't represent
+   * that).
+   */
   onActionComplete?: () => void;
 };
 
 export function DownloadActions({
   download,
+  onUpdate,
   onActionComplete,
 }: DownloadActionsProps) {
   const { pause, resume, cancel, loadingId } = useDownloadActions();
@@ -85,7 +97,7 @@ export function DownloadActions({
       toastManager.add({ type: 'error', title: 'Failed to pause', description: error });
     } else {
       toastManager.add({ type: 'success', title: 'Download paused' });
-      onActionComplete?.();
+      onUpdate?.(download.id, { status: 'paused' });
     }
   };
 
@@ -95,7 +107,7 @@ export function DownloadActions({
       toastManager.add({ type: 'error', title: 'Failed to resume', description: error });
     } else {
       toastManager.add({ type: 'success', title: 'Download resumed' });
-      onActionComplete?.();
+      onUpdate?.(download.id, { status: 'active' });
     }
   };
 
@@ -105,7 +117,7 @@ export function DownloadActions({
       toastManager.add({ type: 'error', title: 'Failed to cancel', description: error });
     } else {
       toastManager.add({ type: 'success', title: 'Download cancelled' });
-      onActionComplete?.();
+      onUpdate?.(download.id, { status: 'cancelled' });
     }
     setConfirmCancelOpen(false);
   };
@@ -116,6 +128,8 @@ export function DownloadActions({
       toastManager.add({ type: 'error', title: 'Failed to retry', description: error });
     } else {
       toastManager.add({ type: 'success', title: 'Retrying download' });
+      // Retry creates a new row with a new id; full refetch is the only
+      // way to reflect that without redesigning the row model.
       onActionComplete?.();
     }
   };

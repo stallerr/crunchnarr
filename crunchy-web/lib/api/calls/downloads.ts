@@ -73,6 +73,10 @@ export const startDownload = (
 export const cancelDownload = (token: string, id: string) =>
   del<{ status: string }>(token, `/downloads/${id}`);
 
+/** Cancel every active/pending/paused download owned by the caller. */
+export const cancelActiveDownloads = (token: string) =>
+  del<{ cancelled: number }>(token, '/downloads/active');
+
 export const pauseDownload = (token: string, id: string) =>
   patch<{ status: string }>(token, `/downloads/${id}/pause`);
 

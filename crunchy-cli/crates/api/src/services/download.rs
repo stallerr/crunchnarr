@@ -1167,6 +1167,53 @@ impl DownloadService {
         Ok(())
     }
 
+    /// Cancel every in-flight download (status active/pending/paused) for
+    /// `user_id`. Triggers the in-memory cancel-token so the spawned task
+    /// exits at its next await point, then bulk-updates the DB rows.
+    /// Returns the number of rows that transitioned to `cancelled`.
+    pub async fn cancel_active_for_user(
+        &self,
+        user_id: &str,
+        db: &SqlitePool,
+    ) -> Result<u64, ApiError> {
+        // Fire the cancel-tokens for every in-memory active download owned
+        // by this user. Drop the write lock before doing DB work.
+        let to_cancel: Vec<String> = {
+            let mut active = self.active_downloads.write().await;
+            let ids: Vec<String> = active
+                .iter()
+                .filter(|(_, h)| h.user_id == user_id)
+                .map(|(id, _)| id.clone())
+                .collect();
+            for id in &ids {
+                if let Some(handle) = active.remove(id) {
+                    handle.cancel_token.cancel();
+                }
+            }
+            ids
+        };
+        info!(
+            "cancel_active_for_user({}): signalled {} in-memory handles",
+            user_id,
+            to_cancel.len()
+        );
+
+        // Bulk-flip the DB. Includes rows the task-loop hasn't observed
+        // yet (e.g. pending rows still waiting on the semaphore).
+        let updated = sqlx::query(
+            "UPDATE downloads \
+             SET status = 'cancelled', updated_at = ? \
+             WHERE user_id = ? AND status IN ('active', 'pending', 'paused')",
+        )
+        .bind(Utc::now().to_rfc3339())
+        .bind(user_id)
+        .execute(db)
+        .await?
+        .rows_affected();
+
+        Ok(updated)
+    }
+
     pub async fn pause_download(
         &self,
         user_id: &str,
