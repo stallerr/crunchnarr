@@ -10,6 +10,7 @@ import {
 } from '@/components/layout/page';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { Switch } from '@/components/ui/switch';
 import { toastManager } from '@/components/ui/toast';
 import { DownloadsTable } from '@/components/downloads/downloads-table';
 import { DownloadActions } from '@/components/downloads/download-actions';
@@ -39,9 +40,10 @@ function tabToStatus(tab: TabKey): 'active' | 'completed' | 'failed' | 'cancelle
 
 export default function DownloadsPage() {
   const [activeTab, setActiveTab] = useState<TabKey>('all');
+  const [includeSuperseded, setIncludeSuperseded] = useState(false);
   const { items, isLoading, isLoadingMore, error, hasMore, loadMore, refetch, mutateRow } =
-    useInfiniteDownloads(tabToStatus(activeTab));
-  const { data: counts } = useDownloadCounts();
+    useInfiniteDownloads(tabToStatus(activeTab), includeSuperseded);
+  const { data: counts } = useDownloadCounts(includeSuperseded);
   const cancelAll = useCancelActiveDownloads();
   const [confirmCancelAllOpen, setConfirmCancelAllOpen] = useState(false);
 
@@ -73,18 +75,27 @@ export default function DownloadsPage() {
             <DownloadIcon className="size-6 text-primary" />
             <PageTitle>Downloads</PageTitle>
           </div>
-          {activeCount > 0 && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setConfirmCancelAllOpen(true)}
-              disabled={cancelAll.isLoading}
-              title="Cancel every active and pending download"
-            >
-              <BanIcon className="size-4" />
-              Cancel all active ({activeCount})
-            </Button>
-          )}
+          <div className="flex items-center gap-3">
+            <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none">
+              <Switch
+                checked={includeSuperseded}
+                onCheckedChange={(checked) => setIncludeSuperseded(!!checked)}
+              />
+              Show superseded
+            </label>
+            {activeCount > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setConfirmCancelAllOpen(true)}
+                disabled={cancelAll.isLoading}
+                title="Cancel every active and pending download"
+              >
+                <BanIcon className="size-4" />
+                Cancel all active ({activeCount})
+              </Button>
+            )}
+          </div>
         </div>
         <PageDescription>
           Manage your active and completed downloads

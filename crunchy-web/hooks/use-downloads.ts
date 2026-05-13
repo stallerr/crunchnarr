@@ -31,7 +31,10 @@ import type {
 
 type TabStatus = 'active' | 'completed' | 'failed' | 'cancelled' | undefined;
 
-export function useInfiniteDownloads(status?: TabStatus) {
+export function useInfiniteDownloads(
+  status?: TabStatus,
+  includeSuperseded = false,
+) {
   const { getToken, isAuthenticated } = useAuthToken();
   const [items, setItems] = useState<DownloadRow[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -54,6 +57,7 @@ export function useInfiniteDownloads(status?: TabStatus) {
         status,
         cursor: cursor ?? undefined,
         limit: 50,
+        include_superseded: includeSuperseded,
       });
 
       if (!mountedRef.current) return;
@@ -78,10 +82,10 @@ export function useInfiniteDownloads(status?: TabStatus) {
         setError(msg);
       }
     },
-    [isAuthenticated, getToken, status]
+    [isAuthenticated, getToken, status, includeSuperseded]
   );
 
-  // Initial load + reset when status changes
+  // Initial load + reset when status or includeSuperseded changes
   useEffect(() => {
     mountedRef.current = true;
     statusRef.current = status;
@@ -150,10 +154,10 @@ export function useInfiniteDownloads(status?: TabStatus) {
   };
 }
 
-export function useDownloadCounts() {
+export function useDownloadCounts(includeSuperseded = false) {
   const result = useQuery<DownloadCounts>(
-    (token) => getDownloadCounts(token),
-    []
+    (token) => getDownloadCounts(token, includeSuperseded),
+    [includeSuperseded]
   );
 
   useWebSocketSubscription('download_complete', () => result.refetch());

@@ -189,9 +189,16 @@ async fn list_downloads(
     }))
 }
 
+#[derive(Deserialize, IntoParams, ToSchema)]
+pub struct CountsParams {
+    #[serde(default)]
+    pub include_superseded: bool,
+}
+
 #[utoipa::path(
     get,
     path = "/downloads/counts",
+    params(CountsParams),
     responses(
         (status = 200, description = "Download counts by status", body = DownloadCounts),
         (status = 401, description = "Not authenticated", body = ErrorBody),
@@ -202,10 +209,11 @@ async fn list_downloads(
 async fn download_counts(
     State(state): State<AppState>,
     auth: AuthUser,
+    Query(params): Query<CountsParams>,
 ) -> Result<Json<DownloadCounts>, ApiError> {
     let counts = state
         .download_service
-        .download_counts(&auth.user_id, &state.db)
+        .download_counts(&auth.user_id, params.include_superseded, &state.db)
         .await?;
     Ok(Json(counts))
 }

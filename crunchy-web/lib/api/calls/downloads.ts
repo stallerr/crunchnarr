@@ -4,18 +4,21 @@ import type { DownloadRow, DownloadResponse, PaginatedDownloads, DownloadCounts 
 
 export const getDownloads = (
   token: string,
-  params?: { status?: string; cursor?: string; limit?: number }
+  params?: { status?: string; cursor?: string; limit?: number; include_superseded?: boolean }
 ) => {
   const query = new URLSearchParams();
   if (params?.status) query.set('status', params.status);
   if (params?.cursor) query.set('cursor', params.cursor);
   if (params?.limit) query.set('limit', String(params.limit));
+  if (params?.include_superseded) query.set('include_superseded', 'true');
   const qs = query.toString();
   return get<PaginatedDownloads>(token, `/downloads${qs ? `?${qs}` : ''}`);
 };
 
-export const getDownloadCounts = (token: string) =>
-  get<DownloadCounts>(token, '/downloads/counts');
+export const getDownloadCounts = (token: string, includeSuperseded = false) => {
+  const qs = includeSuperseded ? '?include_superseded=true' : '';
+  return get<DownloadCounts>(token, `/downloads/counts${qs}`);
+};
 
 export type DownloadedEpisodeIds = {
   /** Episode IDs with a real completed download. */

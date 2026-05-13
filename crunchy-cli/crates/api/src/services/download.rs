@@ -991,16 +991,20 @@ impl DownloadService {
     pub async fn download_counts(
         &self,
         user_id: &str,
+        include_superseded: bool,
         db: &SqlitePool,
     ) -> Result<crate::routes::downloads::DownloadCounts, ApiError> {
-        let rows = sqlx::query_as::<_, (String, i64)>(
+        let sql = if include_superseded {
             "SELECT status, COUNT(*) as count FROM downloads \
-             WHERE user_id = ? AND superseded = 0 \
-             GROUP BY status",
-        )
-        .bind(user_id)
-        .fetch_all(db)
-        .await?;
+             WHERE user_id = ? GROUP BY status"
+        } else {
+            "SELECT status, COUNT(*) as count FROM downloads \
+             WHERE user_id = ? AND superseded = 0 GROUP BY status"
+        };
+        let rows = sqlx::query_as::<_, (String, i64)>(sql)
+            .bind(user_id)
+            .fetch_all(db)
+            .await?;
 
         let mut all = 0;
         let mut active = 0;
