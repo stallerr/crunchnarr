@@ -7,7 +7,7 @@ use crate::utils::{format_bytes, format_elapsed, redact};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::time::Instant;
-use tracing::{debug, trace};
+use tracing::{debug, info, trace, warn};
 
 /// Playback service base URL (cr-play-service).
 const PLAYBACK_BASE: &str = "https://cr-play-service.prd.crunchyrollsvc.com";
@@ -145,7 +145,11 @@ struct VersionEntry {
 impl CrunchyrollClient {
     /// Activate a playback token.
     ///
-    /// This should be called before getting playback data for some content.
+    /// Called once per episode before requesting decryption keys. On HTTP
+    /// 420 TOO_MANY_ACTIVE_STREAMS the response body usually carries the
+    /// list of currently-held slots (parsed by [`StreamError420`]); we issue
+    /// `DELETE /v1/token/{contentId}/{token}` against each of them as a
+    /// best-effort force-recovery, then retry the activate exactly once.
     pub async fn activate_token(&self, guid: &str, token: &str) -> Result<()> {
         let url = format!("{}/v1/token/{}/{}/inactive", TOKEN_BASE, guid, token);
 
@@ -153,20 +157,75 @@ impl CrunchyrollClient {
         trace!("Token: {}", redact(token));
 
         let start = Instant::now();
-        self.patch(&url).await?;
-        let elapsed = start.elapsed();
+        match self.patch(&url).await {
+            Ok(_) => {
+                info!(
+                    "Token activated for {} ({})",
+                    guid,
+                    format_elapsed(start.elapsed())
+                );
+                Ok(())
+            }
+            Err(Error::Api(ApiError::Response { status: 420, message })) => {
+                warn!(
+                    "Token activation hit 420 TOO_MANY_ACTIVE_STREAMS for {}; \
+                     attempting auto-recovery",
+                    guid
+                );
+                trace!("420 body: {}", message);
 
-        trace!("Token activation completed in {}", format_elapsed(elapsed));
-
-        Ok(())
+                let parsed = StreamError420::parse(&message);
+                match parsed {
+                    Some(streams) if !streams.is_empty() => {
+                        info!(
+                            "CR reports {} active stream slot(s) holding the cap; \
+                             force-deactivating each",
+                            streams.len()
+                        );
+                        for s in &streams {
+                            info!(
+                                "  → release slot: device={} content_id={}",
+                                s.device_type, s.content_id
+                            );
+                            if let Err(e) = self
+                                .deactivate_token(&s.content_id, &s.token)
+                                .await
+                            {
+                                warn!(
+                                    "Force-deactivate failed for slot {} (best-effort): {}",
+                                    s.content_id, e
+                                );
+                            }
+                        }
+                        info!("Retrying activate after force-cleanup");
+                        self.patch(&url).await?;
+                        info!(
+                            "Token activated for {} after recovery ({})",
+                            guid,
+                            format_elapsed(start.elapsed())
+                        );
+                        Ok(())
+                    }
+                    _ => {
+                        warn!(
+                            "420 body has no parseable activeStreams; cannot auto-recover. \
+                             body: {}",
+                            message
+                        );
+                        Err(Error::Api(ApiError::Response { status: 420, message }))
+                    }
+                }
+            }
+            Err(e) => Err(e),
+        }
     }
 
     /// Release a playback token previously activated via [`activate_token`].
     ///
     /// Without this call, CR keeps counting the token toward the account's
-    /// per-account active-stream cap for ~5 minutes after the download
-    /// finishes — burning a stream slot per episode. Best-effort: failures
-    /// here are logged at debug and otherwise swallowed because the worst
+    /// per-account active-stream cap for the keep-alive window (~60s) after
+    /// the download finishes — burning a stream slot per episode. Best-effort:
+    /// failures here are logged but otherwise swallowed because the worst
     /// case is the same as not calling it at all.
     ///
     /// [`activate_token`]: Self::activate_token
@@ -177,12 +236,21 @@ impl CrunchyrollClient {
         trace!("Token: {}", redact(token));
 
         let start = Instant::now();
-        self.delete(&url).await?;
-        let elapsed = start.elapsed();
-
-        trace!("Token deactivation completed in {}", format_elapsed(elapsed));
-
-        Ok(())
+        match self.delete(&url).await {
+            Ok(resp) => {
+                info!(
+                    "Token deactivated for {} (HTTP {} in {})",
+                    guid,
+                    resp.status().as_u16(),
+                    format_elapsed(start.elapsed())
+                );
+                Ok(())
+            }
+            Err(e) => {
+                warn!("deactivate_token({}) failed: {}", guid, e);
+                Err(e)
+            }
+        }
     }
 
     /// Get playback data for an episode using default stream endpoint.
@@ -340,5 +408,35 @@ impl CrunchyrollClient {
         );
 
         Ok(text)
+    }
+}
+
+/// CR's 420 TOO_MANY_ACTIVE_STREAMS response body. Parsed inside
+/// [`CrunchyrollClient::activate_token`] to drive auto-recovery: each
+/// listed slot is force-deactivated, then the activate is retried once.
+///
+/// CR doesn't always populate `active_streams` — older clients or some
+/// request shapes get just `{"error":"TOO_MANY_ACTIVE_STREAMS"}` with no
+/// list — so the parse is best-effort and absence is logged.
+#[derive(Debug, Deserialize)]
+struct StreamError420 {
+    #[serde(default, rename = "activeStreams")]
+    active_streams: Vec<ActiveStreamSlot>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct ActiveStreamSlot {
+    #[serde(default, rename = "contentId")]
+    pub content_id: String,
+    #[serde(default)]
+    pub token: String,
+    #[serde(default, rename = "deviceType")]
+    pub device_type: String,
+}
+
+impl StreamError420 {
+    fn parse(body: &str) -> Option<Vec<ActiveStreamSlot>> {
+        let parsed: Self = serde_json::from_str(body).ok()?;
+        Some(parsed.active_streams)
     }
 }
