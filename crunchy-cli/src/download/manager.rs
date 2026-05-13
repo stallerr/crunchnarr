@@ -621,6 +621,33 @@ impl DownloadManager {
                         }
                     };
 
+                    // Verify the picked stream actually carries the locale we asked
+                    // for. `StreamSelector::select_audio` has a "fall back to the
+                    // first adaptation set" branch for the primary-manifest case;
+                    // we don't want it here. If a version-specific manifest doesn't
+                    // contain the requested language (CR sometimes returns a JA-only
+                    // manifest under what's supposed to be an en-US version GUID),
+                    // skip the version rather than embed a mislabeled audio track
+                    // (e.g. JA audio tagged as `en` — observed on Jujutsu Kaisen
+                    // S01E05).
+                    let stream_lang = audio_stream.lang.clone().unwrap_or_default();
+                    let lang_matches = stream_lang.eq_ignore_ascii_case(&locale)
+                        || stream_lang
+                            .to_lowercase()
+                            .starts_with(&locale.to_lowercase())
+                        || locale
+                            .to_lowercase()
+                            .starts_with(&stream_lang.to_lowercase());
+                    if !lang_matches {
+                        warn!(
+                            "Skipping audio version {}: manifest fallback returned {:?}. \
+                             CR's version-specific manifest didn't contain the requested \
+                             language; embedding it would mislabel the audio.",
+                            locale, audio_stream.lang
+                        );
+                        return None;
+                    }
+
                     // 4. Collect CC and Signs & Songs subtitles from this version
                     let mut version_subs: Vec<SubtitleTrack> = Vec::new();
 
