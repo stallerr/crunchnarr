@@ -172,8 +172,12 @@ async fn list_downloads(
     if has_more {
         rows.pop();
     }
+    // Compound cursor `<created_at>|<id>` — needed because a season-level
+    // download inserts N episodes in one tight loop and many rows share the
+    // exact same created_at. A scalar `created_at` cursor with strict `<`
+    // would skip the siblings.
     let next_cursor = if has_more {
-        rows.last().map(|r| r.created_at.clone())
+        rows.last().map(|r| format!("{}|{}", r.created_at, r.id))
     } else {
         None
     };

@@ -954,12 +954,30 @@ impl DownloadService {
             }
         }
 
+        // Cursor shape: `<created_at>|<id>`. Compound to break ties when
+        // many rows share the same created_at (season-bulk INSERT). Legacy
+        // cursors that don't contain `|` fall back to created_at-only.
         if let Some(c) = cursor {
-            sql.push_str(" AND created_at < ?");
-            args.push(c.to_string());
+            match c.split_once('|') {
+                Some((c_at, c_id)) => {
+                    sql.push_str(
+                        " AND (created_at < ? OR (created_at = ? AND id < ?))",
+                    );
+                    args.push(c_at.to_string());
+                    args.push(c_at.to_string());
+                    args.push(c_id.to_string());
+                }
+                None => {
+                    sql.push_str(" AND created_at < ?");
+                    args.push(c.to_string());
+                }
+            }
         }
 
-        sql.push_str(&format!(" ORDER BY created_at DESC LIMIT {}", limit + 1));
+        sql.push_str(&format!(
+            " ORDER BY created_at DESC, id DESC LIMIT {}",
+            limit + 1
+        ));
 
         let mut query = sqlx::query_as::<_, DownloadRow>(&sql);
         for arg in &args {
