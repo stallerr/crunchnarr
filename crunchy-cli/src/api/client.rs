@@ -537,6 +537,66 @@ impl CrunchyrollClient {
         self.handle_response(response).await
     }
 
+    /// Make an authenticated DELETE request.
+    ///
+    /// Same shape as [`patch`](Self::patch): proactive refresh, reactive
+    /// refresh + retry on 401, and a request-rate-limiter acquire up front.
+    pub async fn delete(&self, url: &str) -> Result<Response> {
+        self.throttle().await;
+        self.ensure_valid_token().await?;
+
+        let token = self
+            .access_token
+            .read()
+            .await
+            .clone()
+            .ok_or(Error::Auth(AuthError::NotLoggedIn))?;
+
+        debug!("DELETE {}", url);
+
+        let start = Instant::now();
+        let response = self
+            .http
+            .delete(url)
+            .bearer_auth(&token)
+            .send()
+            .await
+            .map_err(ApiError::Request)?;
+        let elapsed = start.elapsed();
+
+        trace!("DELETE {} -> {} ({})", url, response.status().as_u16(), format_elapsed(elapsed));
+
+        if response.status() == StatusCode::UNAUTHORIZED {
+            debug!("Got 401 Unauthorized, attempting token refresh and retry");
+            let refresh_token = {
+                let config = self.config.read().await;
+                config.auth.refresh_token.clone()
+            };
+            if let Some(rt) = refresh_token {
+                if self.perform_token_refresh(&rt).await.is_ok() {
+                    let new_token = self
+                        .access_token
+                        .read()
+                        .await
+                        .clone()
+                        .ok_or(Error::Auth(AuthError::NotLoggedIn))?;
+                    debug!("Retrying DELETE {} with refreshed token", url);
+                    let retry_response = self
+                        .http
+                        .delete(url)
+                        .bearer_auth(&new_token)
+                        .send()
+                        .await
+                        .map_err(ApiError::Request)?;
+                    return self.handle_response(retry_response).await;
+                }
+            }
+            return self.handle_response(response).await;
+        }
+
+        self.handle_response(response).await
+    }
+
     /// Handle API response, checking for errors.
     async fn handle_response(&self, response: Response) -> Result<Response> {
         let status = response.status();

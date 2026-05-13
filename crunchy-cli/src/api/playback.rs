@@ -161,6 +161,30 @@ impl CrunchyrollClient {
         Ok(())
     }
 
+    /// Release a playback token previously activated via [`activate_token`].
+    ///
+    /// Without this call, CR keeps counting the token toward the account's
+    /// per-account active-stream cap for ~5 minutes after the download
+    /// finishes — burning a stream slot per episode. Best-effort: failures
+    /// here are logged at debug and otherwise swallowed because the worst
+    /// case is the same as not calling it at all.
+    ///
+    /// [`activate_token`]: Self::activate_token
+    pub async fn deactivate_token(&self, guid: &str, token: &str) -> Result<()> {
+        let url = format!("{}/v1/token/{}/{}", TOKEN_BASE, guid, token);
+
+        debug!("Deactivating playback token for {}", guid);
+        trace!("Token: {}", redact(token));
+
+        let start = Instant::now();
+        self.delete(&url).await?;
+        let elapsed = start.elapsed();
+
+        trace!("Token deactivation completed in {}", format_elapsed(elapsed));
+
+        Ok(())
+    }
+
     /// Get playback data for an episode using default stream endpoint.
     pub async fn get_playback(&self, episode_guid: &str) -> Result<CRStreamData> {
         self.get_playback_with_endpoint(episode_guid, StreamEndpoint::default())

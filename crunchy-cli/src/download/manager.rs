@@ -47,6 +47,75 @@ struct AudioTrackInfo {
     subtitles: Vec<SubtitleTrack>,
 }
 
+/// Cheaply-cloneable handle for tracking CR streaming tokens that need
+/// releasing at the end of a download. The matching [`TokenReleaseGuard`]
+/// drains the tracker on drop and fires DELETE-token requests as a detached
+/// tokio task.
+#[derive(Clone)]
+struct TokenTracker {
+    tokens: Arc<std::sync::Mutex<Vec<(String, String)>>>,
+}
+
+impl TokenTracker {
+    fn track(&self, guid: String, token: String) {
+        if let Ok(mut lock) = self.tokens.lock() {
+            lock.push((guid, token));
+        }
+    }
+}
+
+/// RAII guard: releases every CR streaming token activated during a
+/// download when the guard drops (success, error-via-?, panic). Without
+/// this, CR keeps the slot counted for ~5 min after we stop fetching,
+/// driving accounts into HTTP 420 TOO_MANY_ACTIVE_STREAMS on a backlog.
+///
+/// Drop can't be async, so we spawn a detached tokio task to issue the
+/// DELETE calls. Failures are logged at debug and swallowed — the
+/// worst-case outcome is identical to not having this guard at all
+/// (tokens time out naturally on CR's side).
+struct TokenReleaseGuard {
+    client: Arc<CrunchyrollClient>,
+    tracker: TokenTracker,
+}
+
+impl TokenReleaseGuard {
+    fn new(client: Arc<CrunchyrollClient>) -> Self {
+        Self {
+            client,
+            tracker: TokenTracker {
+                tokens: Arc::new(std::sync::Mutex::new(Vec::new())),
+            },
+        }
+    }
+
+    fn tracker(&self) -> TokenTracker {
+        self.tracker.clone()
+    }
+}
+
+impl Drop for TokenReleaseGuard {
+    fn drop(&mut self) {
+        let to_release: Vec<(String, String)> = match self.tracker.tokens.lock() {
+            Ok(mut lock) => std::mem::take(&mut *lock),
+            Err(_) => return,
+        };
+        if to_release.is_empty() {
+            return;
+        }
+        let client = self.client.clone();
+        tokio::spawn(async move {
+            for (guid, token) in to_release {
+                if let Err(e) = client.deactivate_token(&guid, &token).await {
+                    debug!(
+                        "deactivate_token failed for {} (best-effort): {}",
+                        guid, e
+                    );
+                }
+            }
+        });
+    }
+}
+
 /// Intermediate result from parallel fetching of audio version data.
 /// Contains all data needed to acquire decryption keys.
 struct AudioVersionFetchResult {
@@ -216,6 +285,13 @@ impl DownloadManager {
         let download_start = Instant::now();
         info!("Starting download for episode: {}", episode_id);
         trace!("Download options: {:?}", options);
+
+        // RAII: every CR streaming token we activate below is released on
+        // drop (success, error, or panic) so the active-stream slot frees
+        // up immediately instead of CR's ~5-min server-side timeout.
+        let token_guard = TokenReleaseGuard::new(self.client.clone());
+        let token_tracker = token_guard.tracker();
+
         self.reporter
             .on_phase_change("metadata", &format!("Fetching episode {}", episode_id));
 
@@ -483,6 +559,7 @@ impl DownloadManager {
                 self.client
                     .activate_token(&episode.id, video_token)
                     .await?;
+                token_tracker.track(episode.id.clone(), video_token.to_string());
 
                 // Content ID is the media_id from stream_data
                 let content_id = if !stream_data.media_id.is_empty() {
@@ -756,6 +833,7 @@ impl DownloadManager {
                         media_guid.clone()
                     };
                     let semaphore = semaphore.clone();
+                    let token_tracker = token_tracker.clone();
 
                     async move {
                         // Acquire semaphore permit if concurrency is limited
@@ -771,6 +849,7 @@ impl DownloadManager {
                                 debug!("Failed to activate token for {}: {}, skipping", locale, e);
                                 return None;
                             }
+                            token_tracker.track(media_guid.clone(), token.clone());
                         }
 
                         let bearer_token = match client.get_access_token().await {
