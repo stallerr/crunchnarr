@@ -769,9 +769,13 @@ impl DownloadService {
 
                 // Cancellation can land while we were queued under the
                 // semaphore. Honour it before doing any CR-side work.
+                // The WHERE clause prevents racing with pause() — if the
+                // caller already set 'paused' or another concurrent path
+                // set 'cancelled', don't overwrite.
                 if cancel_clone.is_cancelled() {
                     let _ = sqlx::query(
-                        "UPDATE downloads SET status = 'cancelled', updated_at = ? WHERE id = ?"
+                        "UPDATE downloads SET status = 'cancelled', updated_at = ? \
+                         WHERE id = ? AND status NOT IN ('paused', 'cancelled')",
                     )
                     .bind(Utc::now().to_rfc3339())
                     .bind(&dl_id)
@@ -865,8 +869,12 @@ impl DownloadService {
                     }
                     _ = cancel_clone.cancelled() => {
                         info!("Download {} cancelled", dl_id);
+                        // Don't overwrite if pause() already flipped to
+                        // 'paused' — that one is RAII-cleaned to 'paused'
+                        // by an external write that races our cancel-token.
                         let _ = sqlx::query(
-                            "UPDATE downloads SET status = 'cancelled', updated_at = ? WHERE id = ?"
+                            "UPDATE downloads SET status = 'cancelled', updated_at = ? \
+                             WHERE id = ? AND status NOT IN ('paused', 'cancelled')",
                         )
                         .bind(Utc::now().to_rfc3339())
                         .bind(&dl_id)
@@ -1248,12 +1256,15 @@ impl DownloadService {
     ) -> Result<(), ApiError> {
         let row = self.get_download(user_id, download_id, db).await?;
 
-        // Failed and publish_failed can't be "resumed" mid-stream — restart
-        // from scratch using the original source URL.
-        if matches!(row.status.as_str(), "failed" | "publish_failed") {
+        // failed / publish_failed / paused all share the same recovery
+        // shape: delete the old row, re-issue start_download with the
+        // original URL. The spawned task's resume_cache=true picks up
+        // any on-disk segments from /tmp/crunchy-cli/<episode_id>/ so
+        // paused downloads continue rather than restart from zero.
+        if matches!(row.status.as_str(), "failed" | "publish_failed" | "paused") {
             let source_url = row.source_url.clone().ok_or_else(|| {
                 ApiError::BadRequest(
-                    "Download cannot be retried: source URL missing".to_string(),
+                    "Download cannot be resumed: source URL missing".to_string(),
                 )
             })?;
 
@@ -1268,23 +1279,10 @@ impl DownloadService {
             return Ok(());
         }
 
-        if row.status != "paused" {
-            return Err(ApiError::BadRequest(format!(
-                "Download cannot be resumed from status '{}'",
-                row.status
-            )));
-        }
-
-        sqlx::query(
-            "UPDATE downloads SET status = 'active', updated_at = ? WHERE id = ? AND user_id = ?",
-        )
-        .bind(Utc::now().to_rfc3339())
-        .bind(download_id)
-        .bind(user_id)
-        .execute(db)
-        .await?;
-
-        Ok(())
+        Err(ApiError::BadRequest(format!(
+            "Download cannot be resumed from status '{}'",
+            row.status
+        )))
     }
 }
 

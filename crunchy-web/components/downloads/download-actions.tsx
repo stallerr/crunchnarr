@@ -107,7 +107,10 @@ export function DownloadActions({
       toastManager.add({ type: 'error', title: 'Failed to resume', description: error });
     } else {
       toastManager.add({ type: 'success', title: 'Download resumed' });
-      onUpdate?.(download.id, { status: 'active' });
+      // Resume deletes the old row and re-issues start_download, which
+      // creates a fresh row with a new id. mutateRow can't represent that
+      // — a full refetch is the only way to see the new row.
+      onActionComplete?.();
     }
   };
 
